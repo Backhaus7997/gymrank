@@ -7,6 +7,7 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import com.example.gymrank.ui.screens.home.HomeScreen
 import com.example.gymrank.ui.screens.login.LoginScreen
+import com.example.gymrank.ui.screens.ranking.RankingScreen
 import com.example.gymrank.ui.screens.selectgym.SelectGymScreen
 import com.example.gymrank.ui.screens.welcome.WelcomeScreen
 import com.example.gymrank.ui.session.SessionViewModel
@@ -55,7 +56,21 @@ fun AppNavigation(
 
         composable(Screen.Home.route) {
             HomeScreen(
-                sessionViewModel = sessionViewModel
+                sessionViewModel = sessionViewModel,
+                onOpenRanking = {
+                    navController.navigate(Screen.Ranking.route)
+                }
+            )
+        }
+
+        composable(Screen.Ranking.route) {
+            val selectedGym = sessionViewModel.selectedGym.value
+            RankingScreen(
+                gymName = selectedGym?.name ?: "Iron Temple",
+                gymLocation = selectedGym?.city?.let { "$it, Argentina" } ?: "Buenos Aires, AR",
+                onBack = {
+                    navController.popBackStack()
+                }
             )
         }
     }

@@ -44,6 +44,11 @@ fun GymCard(
             .fillMaxWidth()
             .height(140.dp)
             .scale(scale)
+            .border(
+                width = 1.dp,
+                color = Color(0xFF2C2C2E),
+                shape = RoundedCornerShape(16.dp)
+            )
             .clickable(
                 interactionSource = interactionSource,
                 indication = null,
@@ -60,27 +65,20 @@ fun GymCard(
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .border(
-                    width = 1.dp,
-                    color = Color(0xFF2C2C2E),
-                    shape = RoundedCornerShape(16.dp)
-                )
         ) {
+            // Background fallback - dark surface
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color(0xFF1C1C1E))
+            )
+
             // Background image with Coil
             AsyncImage(
                 model = gym.imageUrl,
                 contentDescription = gym.name,
                 modifier = Modifier.fillMaxSize(),
-                contentScale = ContentScale.Crop,
-                placeholder = null,
-                error = null
-            )
-
-            // Placeholder/Error fallback - dark surface
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .background(Color(0xFF1C1C1E))
+                contentScale = ContentScale.Crop
             )
 
             // Dark gradient overlay for readability
