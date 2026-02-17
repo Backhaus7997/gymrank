@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg"
+    viewBox="0 0 200 400">
+
+    <rect id="chest_l" x="60" y="90" width="30" height="40" fill="#2E3B35"/>
+    <rect id="chest_r" x="110" y="90" width="30" height="40" fill="#2E3B35"/>
+
+    <rect id="abs_upper" x="80" y="140" width="40" height="30" fill="#2E3B35"/>
+    <rect id="abs_mid" x="80" y="175" width="40" height="30" fill="#2E3B35"/>
+    <rect id="abs_lower" x="80" y="210" width="40" height="30" fill="#2E3B35"/>
+
+</svg>

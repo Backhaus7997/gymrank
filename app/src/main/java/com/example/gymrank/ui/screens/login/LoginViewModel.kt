@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.gymrank.data.repository.AuthRepositoryImpl
 import com.example.gymrank.domain.repository.AuthRepository
+import com.example.gymrank.ui.session.SessionViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -80,5 +81,9 @@ class LoginViewModel(
 
     fun resetUiState() {
         _uiState.value = LoginUiState.Idle
+    }
+
+    fun onLoginSuccess(sessionViewModel: SessionViewModel, navigateToOnboarding: () -> Unit, navigateToHome: () -> Unit) {
+        sessionViewModel.decidePostAuthNavigation(navigateToOnboarding, navigateToHome)
     }
 }

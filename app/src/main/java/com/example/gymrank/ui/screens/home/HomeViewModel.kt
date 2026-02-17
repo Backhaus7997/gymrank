@@ -1,18 +1,32 @@
 package com.example.gymrank.ui.screens.home
 
-import androidx.lifecycle.ViewModel
+import android.app.Application
+import androidx.lifecycle.AndroidViewModel
+import androidx.lifecycle.viewModelScope
+import com.example.gymrank.data.repository.WorkoutRepositoryImpl
 import com.example.gymrank.domain.model.Gym
+import com.example.gymrank.domain.model.Workout
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.launch
 
-class HomeViewModel : ViewModel() {
+class HomeViewModel(app: Application) : AndroidViewModel(app) {
+
+    private val workoutRepo = WorkoutRepositoryImpl(app)
 
     private val _uiState = MutableStateFlow(HomeUiState())
     val uiState: StateFlow<HomeUiState> = _uiState.asStateFlow()
 
     init {
+        // collect last workout continuously
+        viewModelScope.launch {
+            workoutRepo.getLastWorkout().collect { w ->
+                _uiState.value = _uiState.value.copy(lastWorkout = w)
+            }
+        }
         loadHomeData()
     }
 

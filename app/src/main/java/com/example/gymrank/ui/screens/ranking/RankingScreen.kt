@@ -18,11 +18,15 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.navigation.NavController
+import androidx.navigation.NavType
+import androidx.navigation.navArgument
+import java.net.URLEncoder
+import java.nio.charset.StandardCharsets
 
 // ============================================
 // MODELS
@@ -42,20 +46,62 @@ data class RankingEntry(
 )
 
 // ============================================
+// ROUTES
+// ============================================
+
+object RankingRoutes {
+    // ranking_details/{gymName}/{gymLocation}/{periodLabel}/{myPosition}/{myPoints}
+    const val Details = "ranking_details/{gymName}/{gymLocation}/{periodLabel}/{myPosition}/{myPoints}"
+
+    fun detailsRoute(
+        gymName: String,
+        gymLocation: String,
+        periodLabel: String,
+        myPosition: Int,
+        myPoints: Int
+    ): String {
+        fun enc(v: String) = URLEncoder.encode(v, StandardCharsets.UTF_8.toString())
+        return "ranking_details/${enc(gymName)}/${enc(gymLocation)}/${enc(periodLabel)}/$myPosition/$myPoints"
+    }
+
+    // Si lo querés copiar al NavHost:
+    val detailsArgs = listOf(
+        navArgument("gymName") { type = NavType.StringType },
+        navArgument("gymLocation") { type = NavType.StringType },
+        navArgument("periodLabel") { type = NavType.StringType },
+        navArgument("myPosition") { type = NavType.IntType },
+        navArgument("myPoints") { type = NavType.IntType }
+    )
+}
+
+// ============================================
+// THEME COLORS (match screenshot vibe)
+// ============================================
+
+private val ScreenBg = Color(0xFF070B0A)          // very dark green/black
+private val CardBg = Color(0xFF0F1412)            // list rows
+private val CardStroke = Color(0xFF1E2622)        // subtle border
+private val Muted = Color(0xFF8E8E93)
+private val White = Color(0xFFFFFFFF)
+private val AccentGreen = Color(0xFF32E37A)       // neon green
+private val IconButtonBg = Color(0xFF151A18)      // circular icon bg
+private val Divider = Color(0xFF1C2420)
+
+// ============================================
 // MAIN SCREEN
 // ============================================
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun RankingScreen(
+    navController: NavController,
     gymName: String = "Iron Temple",
     gymLocation: String = "Buenos Aires, AR",
     myPosition: Int = 14,
     myPoints: Int = 6240,
-    onBack: () -> Unit = {},
+    onBack: () -> Unit = { navController.popBackStack() },
     onSearch: () -> Unit = {},
-    onNotifications: () -> Unit = {},
-    onViewDetails: () -> Unit = {}
+    onNotifications: () -> Unit = {}
 ) {
     // Mock data
     val weekly = remember {
@@ -67,7 +113,7 @@ fun RankingScreen(
             RankingEntry(5, "Joaquín Paz", 1520),
             RankingEntry(6, "Micaela Suárez", 1450),
             RankingEntry(7, "Tomás Herrera", 1320),
-            RankingEntry(8, "Camila Vargas", 1280),
+            RankingEntry(8, "Agustín Rivas", 1280),
             RankingEntry(9, "Franco Díaz", 1150),
             RankingEntry(10, "Martina López", 1090),
             RankingEntry(11, "Agustín Morales", 980),
@@ -79,13 +125,8 @@ fun RankingScreen(
         )
     }
 
-    val monthly = remember {
-        weekly.map { it.copy(points = it.points * 3) }
-    }
-
-    val allTime = remember {
-        weekly.map { it.copy(points = it.points * 10) }
-    }
+    val monthly = remember { weekly.map { it.copy(points = it.points * 3) } }
+    val allTime = remember { weekly.map { it.copy(points = it.points * 10) } }
 
     var selectedPeriod by remember { mutableStateOf(RankingPeriod.Weekly) }
 
@@ -98,9 +139,9 @@ fun RankingScreen(
     }
 
     Scaffold(
-        containerColor = Color(0xFF000000),
+        containerColor = ScreenBg,
         topBar = {
-            RankingTopBar(
+            RankingHeader(
                 gymName = gymName,
                 gymLocation = gymLocation,
                 onBack = onBack,
@@ -112,25 +153,34 @@ fun RankingScreen(
             MyPositionBar(
                 position = myPosition,
                 points = myPoints,
-                onViewDetails = onViewDetails
+                onViewDetails = {
+                    navController.navigate(
+                        RankingRoutes.detailsRoute(
+                            gymName = gymName,
+                            gymLocation = gymLocation,
+                            periodLabel = selectedPeriod.label,
+                            myPosition = myPosition,
+                            myPoints = myPoints
+                        )
+                    )
+                }
             )
         }
+
     ) { padding ->
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .background(Color(0xFF000000))
+                .background(ScreenBg)
                 .padding(padding)
         ) {
-            // Tabs
             PeriodTabs(
                 selected = selectedPeriod,
                 onSelected = { selectedPeriod = it }
             )
 
-            Spacer(Modifier.height(16.dp))
+            Spacer(Modifier.height(14.dp))
 
-            // Top 3 podium
             val top3 = entries.filter { it.position in 1..3 }.sortedBy { it.position }
             if (top3.size == 3) {
                 PodiumTop3(
@@ -140,103 +190,119 @@ fun RankingScreen(
                 )
             }
 
-            Spacer(Modifier.height(20.dp))
+            Spacer(Modifier.height(16.dp))
 
-            // Resto del ranking
             LazyColumn(
                 modifier = Modifier.fillMaxSize(),
                 contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                items(entries.filter { it.position >= 4 }) { entry ->
-                    RankingRow(
-                        entry = entry,
-                        highlight = entry.isMe
-                    )
+                items(entries.filter { it.position >= 4 && !it.isMe }) { entry ->
+                    RankingRow(entry = entry)
                 }
-
-                // Espacio para el bottom bar
-                item { Spacer(Modifier.height(80.dp)) }
+                item { Spacer(Modifier.height(90.dp)) }
             }
         }
     }
 }
 
 // ============================================
-// TOP BAR
+// HEADER
 // ============================================
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun RankingTopBar(
+private fun RankingHeader(
     gymName: String,
     gymLocation: String,
     onBack: () -> Unit,
     onSearch: () -> Unit,
     onNotifications: () -> Unit
 ) {
-    CenterAlignedTopAppBar(
-        title = {
-            Column(
-                horizontalAlignment = Alignment.CenterHorizontally,
-                modifier = Modifier.padding(vertical = 4.dp)
-            ) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(ScreenBg)
+            .padding(top = 10.dp, bottom = 8.dp)
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 14.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            CircleIconButton(onClick = onBack) {
+                Icon(
+                    imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                    contentDescription = "Volver",
+                    tint = White
+                )
+            }
+
+            Spacer(Modifier.width(10.dp))
+
+            Column(modifier = Modifier.weight(1f)) {
                 Text(
                     text = gymName,
                     fontSize = 18.sp,
                     fontWeight = FontWeight.Bold,
-                    color = Color(0xFFFFFFFF),
+                    color = White,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
-
-                Spacer(Modifier.height(4.dp))
-
-                // Location chip
+                Spacer(Modifier.height(6.dp))
                 Surface(
-                    shape = RoundedCornerShape(12.dp),
-                    color = Color(0xFF2C2C2E),
-                    modifier = Modifier.padding(horizontal = 4.dp)
+                    color = IconButtonBg,
+                    shape = RoundedCornerShape(999.dp)
                 ) {
                     Text(
                         text = gymLocation,
                         fontSize = 11.sp,
                         fontWeight = FontWeight.Medium,
-                        color = Color(0xFF8E8E93),
+                        color = Muted,
                         modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
                     )
                 }
             }
-        },
-        navigationIcon = {
-            IconButton(onClick = onBack) {
-                Icon(
-                    imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                    contentDescription = "Volver",
-                    tint = Color(0xFFFFFFFF)
-                )
-            }
-        },
-        actions = {
-            IconButton(onClick = onSearch) {
+
+            Spacer(Modifier.width(10.dp))
+
+            CircleIconButton(onClick = onSearch) {
                 Icon(
                     imageVector = Icons.Filled.Search,
                     contentDescription = "Buscar",
-                    tint = Color(0xFFFFFFFF)
+                    tint = White
                 )
             }
-            IconButton(onClick = onNotifications) {
+
+            Spacer(Modifier.width(10.dp))
+
+            CircleIconButton(onClick = onNotifications) {
                 Icon(
                     imageVector = Icons.Filled.Notifications,
                     contentDescription = "Notificaciones",
-                    tint = Color(0xFFFFFFFF)
+                    tint = White
                 )
             }
-        },
-        colors = TopAppBarDefaults.centerAlignedTopAppBarColors(
-            containerColor = Color(0xFF000000)
+        }
+    }
+}
+
+@Composable
+private fun CircleIconButton(
+    onClick: () -> Unit,
+    content: @Composable BoxScope.() -> Unit
+) {
+    Surface(
+        onClick = onClick,
+        color = IconButtonBg,
+        shape = CircleShape
+    ) {
+        Box(
+            modifier = Modifier.size(40.dp),
+            contentAlignment = Alignment.Center,
+            content = content
         )
-    )
+    }
 }
 
 // ============================================
@@ -249,48 +315,50 @@ private fun PeriodTabs(
     onSelected: (RankingPeriod) -> Unit
 ) {
     val items = RankingPeriod.entries
+    val selectedIndex = items.indexOf(selected)
 
-    TabRow(
-        selectedTabIndex = items.indexOf(selected),
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 16.dp),
-        containerColor = Color.Transparent,
-        contentColor = Color(0xFFD0FD3E),
-        indicator = {},
-        divider = {
-            HorizontalDivider(
-                color = Color(0xFF38383A),
-                thickness = 1.dp
-            )
-        }
-    ) {
-        items.forEach { period ->
-            Tab(
-                selected = period == selected,
-                onClick = { onSelected(period) },
-                text = {
-                    Column {
+    Column(modifier = Modifier.fillMaxWidth()) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 18.dp),
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            items.forEachIndexed { idx, period ->
+                val isSelected = idx == selectedIndex
+
+                Column(
+                    modifier = Modifier
+                        .weight(1f)
+                        .padding(top = 6.dp, bottom = 10.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    TextButton(
+                        onClick = { onSelected(period) },
+                        contentPadding = PaddingValues(0.dp)
+                    ) {
                         Text(
                             text = period.label,
-                            fontWeight = if (period == selected) FontWeight.Bold else FontWeight.Medium,
-                            fontSize = 15.sp
+                            fontSize = 15.sp,
+                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.SemiBold,
+                            color = if (isSelected) AccentGreen else Muted
                         )
-                        Spacer(Modifier.height(4.dp))
-                        if (period == selected) {
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .height(3.dp)
-                                    .background(Color(0xFFD0FD3E))
-                            )
-                        }
                     }
-                },
-                selectedContentColor = Color(0xFFD0FD3E),
-                unselectedContentColor = Color(0xFF8E8E93)
-            )
+
+                    Spacer(Modifier.height(6.dp))
+
+                    Box(
+                        modifier = Modifier
+                            .width(86.dp)
+                            .height(3.dp)
+                            .clip(RoundedCornerShape(999.dp))
+                            .background(if (isSelected) AccentGreen else Color.Transparent)
+                    )
+                }
+            }
         }
+
+        HorizontalDivider(color = Divider, thickness = 1.dp)
     }
 }
 
@@ -309,35 +377,30 @@ private fun PodiumTop3(
             .fillMaxWidth()
             .padding(horizontal = 16.dp),
         horizontalArrangement = Arrangement.SpaceEvenly,
-        verticalAlignment = Alignment.Bottom
+        verticalAlignment = Alignment.Top
     ) {
-        // #2
         PodiumCard(
             entry = second,
-            size = 80.dp,
+            size = 76.dp,
             label = "#2",
-            emoji = "🥈"
+            medal = "🥈",
+            isWinner = false
         )
 
-        Spacer(Modifier.width(8.dp))
-
-        // #1 (winner - más grande)
         PodiumCard(
             entry = first,
-            size = 110.dp,
+            size = 108.dp,
             label = "#1",
-            emoji = "🥇",
+            medal = "🥇",
             isWinner = true
         )
 
-        Spacer(Modifier.width(8.dp))
-
-        // #3
         PodiumCard(
             entry = third,
-            size = 80.dp,
+            size = 76.dp,
             label = "#3",
-            emoji = "🥉"
+            medal = "🥉",
+            isWinner = false
         )
     }
 }
@@ -347,169 +410,137 @@ private fun PodiumCard(
     entry: RankingEntry,
     size: Dp,
     label: String,
-    emoji: String,
-    isWinner: Boolean = false
+    medal: String,
+    isWinner: Boolean
 ) {
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
-        modifier = Modifier.width(100.dp)
+        modifier = Modifier.width(110.dp)
     ) {
-        // Avatar con emoji
         Box(
             modifier = Modifier
                 .size(size)
                 .clip(CircleShape)
-                .background(
-                    if (isWinner)
-                        Color(0xFFD0FD3E).copy(alpha = 0.20f)
-                    else
-                        Color(0xFF2C2C2E)
-                )
+                .background(if (isWinner) Color.Transparent else IconButtonBg)
                 .border(
-                    width = if (isWinner) 2.dp else 1.dp,
-                    color = if (isWinner) Color(0xFFD0FD3E) else Color(0xFF38383A),
+                    width = if (isWinner) 3.dp else 1.dp,
+                    color = if (isWinner) AccentGreen else CardStroke,
                     shape = CircleShape
                 ),
             contentAlignment = Alignment.Center
         ) {
             Text(
-                text = emoji,
-                fontSize = if (isWinner) 42.sp else 32.sp
+                text = medal,
+                fontSize = if (isWinner) 44.sp else 32.sp
             )
         }
 
         Spacer(Modifier.height(10.dp))
 
-        // Posición
         Text(
             text = label,
             fontSize = 13.sp,
             fontWeight = FontWeight.Bold,
-            color = if (isWinner) Color(0xFFD0FD3E) else Color(0xFF8E8E93)
+            color = if (isWinner) AccentGreen else Muted
         )
 
-        Spacer(Modifier.height(4.dp))
+        Spacer(Modifier.height(6.dp))
 
-        // Nombre
         Text(
             text = entry.name,
             fontSize = 14.sp,
-            fontWeight = if (isWinner) FontWeight.Bold else FontWeight.SemiBold,
-            color = Color(0xFFFFFFFF),
+            fontWeight = FontWeight.SemiBold,
+            color = White,
             maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            textAlign = TextAlign.Center
+            overflow = TextOverflow.Ellipsis
         )
 
-        // Puntos
+        Spacer(Modifier.height(2.dp))
+
         Text(
-            text = "${entry.points} pts",
+            text = "${formatPts(entry.points)} pts",
             fontSize = 12.sp,
             fontWeight = FontWeight.Medium,
-            color = Color(0xFF8E8E93)
+            color = Muted
         )
     }
 }
 
 // ============================================
-// RANKING ROW (lista #4+)
+// RANKING ROW
 // ============================================
 
 @Composable
 private fun RankingRow(
     entry: RankingEntry,
-    highlight: Boolean,
     modifier: Modifier = Modifier
 ) {
-    val backgroundColor = if (highlight)
-        Color(0xFFD0FD3E).copy(alpha = 0.15f)
-    else
-        Color(0xFF1C1C1E)
-
-    val borderColor = if (highlight)
-        Color(0xFFD0FD3E).copy(alpha = 0.5f)
-    else
-        Color(0xFF2C2C2E)
-
     Surface(
-        modifier = modifier
-            .fillMaxWidth()
-            .border(
-                width = 1.dp,
-                color = borderColor,
-                shape = RoundedCornerShape(14.dp)
-            ),
-        shape = RoundedCornerShape(14.dp),
-        color = backgroundColor,
+        modifier = modifier.fillMaxWidth(),
+        color = CardBg,
+        shape = RoundedCornerShape(18.dp),
         tonalElevation = 0.dp
     ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 14.dp, vertical = 12.dp),
+                .border(1.dp, CardStroke, RoundedCornerShape(18.dp))
+                .padding(horizontal = 14.dp, vertical = 14.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            // Posición
             Text(
                 text = "#${entry.position}",
-                fontSize = 16.sp,
+                fontSize = 14.sp,
                 fontWeight = FontWeight.Bold,
-                color = if (highlight) Color(0xFFD0FD3E) else Color(0xFFFFFFFF),
-                modifier = Modifier.width(42.dp)
+                color = Muted,
+                modifier = Modifier.width(38.dp)
             )
 
             Spacer(Modifier.width(10.dp))
 
-            // Avatar
             Box(
                 modifier = Modifier
-                    .size(42.dp)
+                    .size(34.dp)
                     .clip(CircleShape)
-                    .background(Color(0xFF2C2C2E))
-                    .border(1.dp, Color(0xFF38383A), CircleShape),
+                    .background(IconButtonBg)
+                    .border(1.dp, CardStroke, CircleShape),
                 contentAlignment = Alignment.Center
             ) {
-                Text(
-                    text = if (entry.isMe) "🎯" else "🏋️",
-                    fontSize = 20.sp
-                )
+                Text(text = "🏋️", fontSize = 16.sp)
             }
 
             Spacer(Modifier.width(12.dp))
 
-            // Nombre + subtitle
-            Column(
-                modifier = Modifier.weight(1f)
-            ) {
+            Column(modifier = Modifier.weight(1f)) {
                 Text(
                     text = entry.name,
                     fontSize = 15.sp,
-                    fontWeight = if (highlight) FontWeight.Bold else FontWeight.SemiBold,
-                    color = Color(0xFFFFFFFF),
+                    fontWeight = FontWeight.SemiBold,
+                    color = White,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
+                Spacer(Modifier.height(2.dp))
                 Text(
                     text = "Competidor/a",
                     fontSize = 12.sp,
-                    fontWeight = FontWeight.Normal,
-                    color = Color(0xFF8E8E93)
+                    fontWeight = FontWeight.Medium,
+                    color = Muted
                 )
             }
 
-            // Puntos
             Text(
-                text = "${entry.points} pts",
-                fontSize = 15.sp,
+                text = "${formatPts(entry.points)} pts",
+                fontSize = 14.sp,
                 fontWeight = FontWeight.Bold,
-                color = if (highlight) Color(0xFFD0FD3E) else Color(0xFFFFFFFF)
+                color = White
             )
         }
     }
 }
 
 // ============================================
-// BOTTOM BAR (mi posición)
+// BOTTOM BAR
 // ============================================
 
 @Composable
@@ -521,9 +552,9 @@ private fun MyPositionBar(
 ) {
     Surface(
         modifier = modifier.fillMaxWidth(),
-        color = Color(0xFF1C1C1E),
-        tonalElevation = 8.dp,
-        shadowElevation = 8.dp
+        color = Color(0xFF000000),
+        tonalElevation = 6.dp,
+        shadowElevation = 10.dp
     ) {
         Row(
             modifier = Modifier
@@ -536,26 +567,25 @@ private fun MyPositionBar(
                     text = "Tu posición",
                     fontSize = 12.sp,
                     fontWeight = FontWeight.Medium,
-                    color = Color(0xFF8E8E93)
+                    color = Muted
                 )
-
                 Spacer(Modifier.height(4.dp))
-
                 Text(
-                    text = "#$position · ${points.toString().reversed().chunked(3).joinToString(".").reversed()} pts",
+                    text = "#$position · ${formatPts(points)} pts",
                     fontSize = 18.sp,
                     fontWeight = FontWeight.Bold,
-                    color = Color(0xFFFFFFFF)
+                    color = White
                 )
             }
 
             Button(
                 onClick = onViewDetails,
-                shape = RoundedCornerShape(14.dp),
+                shape = RoundedCornerShape(999.dp),
                 colors = ButtonDefaults.buttonColors(
-                    containerColor = Color(0xFFD0FD3E),
+                    containerColor = AccentGreen,
                     contentColor = Color(0xFF000000)
                 ),
+                contentPadding = PaddingValues(horizontal = 18.dp, vertical = 10.dp),
                 modifier = Modifier.height(44.dp)
             ) {
                 Text(
@@ -566,4 +596,14 @@ private fun MyPositionBar(
             }
         }
     }
+}
+
+// ============================================
+// UTILS
+// ============================================
+
+private fun formatPts(value: Int): String {
+    val s = value.toString()
+    val rev = s.reversed().chunked(3).joinToString(".")
+    return rev.reversed()
 }

@@ -33,6 +33,17 @@ object GymRankColors {
     // Gradients for overlays
     val OverlayTop = Color(0xCC0B0F0E) // 80% opacity
     val OverlayBottom = Color(0x000B0F0E) // Transparent
+
+    // Blue premium palette additions for onboarding
+    val BluePrimary = Color(0xFF0A84FF)
+    val BluePrimaryPressed = Color(0xFF0066CC)
+    val CyanGlow = Color(0xFF00D1FF)
+
+    // iOS-like dark surfaces per spec
+    val BlackBase = Color(0xFF000000)
+    val SurfaceCard = Color(0xFF1C1C1E)
+    val SurfaceInput = Color(0xFF2C2C2E)
+    val DividerSubtle = Color(0xFF38383A)
 }
 
 /**
@@ -75,6 +86,15 @@ object DesignTokens {
         val GradientEnd = GymRankColors.Background
         val OverlayGradientTop = GymRankColors.OverlayTop
         val OverlayGradientBottom = GymRankColors.OverlayBottom
+
+        // Map onboarding specific tokens
+        val BackgroundBase = GymRankColors.BlackBase
+        val SurfaceElevated = GymRankColors.SurfaceCard
+        val SurfaceInputs = GymRankColors.SurfaceInput
+        val DividerSubtle = GymRankColors.DividerSubtle
+        val PrimaryBlue = GymRankColors.BluePrimary
+        val PrimaryBluePressed = GymRankColors.BluePrimaryPressed
+        val GlowCyan = GymRankColors.CyanGlow
     }
 
     // Spacing System (8dp base)
@@ -96,6 +116,9 @@ object DesignTokens {
         val pill: Dp = 28.dp
         val sheetTop: Dp = 28.dp
         val round: Dp = 100.dp
+        val card: Dp = 16.dp
+        val input: Dp = 14.dp
+        val pillLarge: Dp = 999.dp
     }
 
     // Elevation

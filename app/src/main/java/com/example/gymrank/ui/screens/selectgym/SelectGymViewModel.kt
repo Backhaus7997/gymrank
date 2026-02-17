@@ -10,6 +10,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import java.util.Locale
 
 class SelectGymViewModel(
     private val gymRepository: GymRepository = GymRepositoryImpl()
@@ -28,11 +29,21 @@ class SelectGymViewModel(
         viewModelScope.launch {
             gymRepository.getGyms()
                 .onSuccess { gyms ->
-                    _uiState.update {
-                        it.copy(
+                    // ✅ Orden estable para evitar que cambien posiciones/imagenes “solas”
+                    val stable = gyms.sortedWith(
+                        compareBy<Gym> { it.city.lowercase(Locale.getDefault()) }
+                            .thenBy { it.name.lowercase(Locale.getDefault()) }
+                            .thenBy { it.id }
+                    )
+
+                    _uiState.update { state ->
+                        // ✅ Mantener el filtro actual si ya había búsqueda
+                        val filtered = filterGyms(stable, state.searchQuery)
+
+                        state.copy(
                             isLoading = false,
-                            gyms = gyms,
-                            filteredGyms = gyms
+                            gyms = stable,
+                            filteredGyms = filtered
                         )
                     }
                 }
@@ -49,14 +60,7 @@ class SelectGymViewModel(
 
     fun onSearchQueryChange(query: String) {
         _uiState.update { state ->
-            val filtered = if (query.isBlank()) {
-                state.gyms
-            } else {
-                state.gyms.filter { gym ->
-                    gym.name.contains(query, ignoreCase = true) ||
-                    gym.city.contains(query, ignoreCase = true)
-                }
-            }
+            val filtered = filterGyms(state.gyms, query)
             state.copy(
                 searchQuery = query,
                 filteredGyms = filtered
@@ -66,5 +70,15 @@ class SelectGymViewModel(
 
     fun retryLoadGyms() {
         loadGyms()
+    }
+
+    private fun filterGyms(gyms: List<Gym>, query: String): List<Gym> {
+        val q = query.trim()
+        if (q.isBlank()) return gyms
+
+        return gyms.filter { gym ->
+            gym.name.contains(q, ignoreCase = true) ||
+                    gym.city.contains(q, ignoreCase = true)
+        }
     }
 }

@@ -2,17 +2,22 @@ package com.example.gymrank.ui.components
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.outlined.Lock
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -158,6 +163,7 @@ fun AppTextField(
     keyboardOptions: KeyboardOptions = KeyboardOptions.Default,
     keyboardActions: KeyboardActions = KeyboardActions.Default,
     leadingIcon: ImageVector? = null,
+    trailingIcon: ImageVector? = null, // ✅ NUEVO
     singleLine: Boolean = true
 ) {
     var passwordVisible by remember { mutableStateOf(false) }
@@ -169,8 +175,7 @@ fun AppTextField(
             label = {
                 Text(
                     text = label,
-                    color = if (isError) GymRankColors.Error
-                           else GymRankColors.TextSecondary
+                    color = if (isError) GymRankColors.Error else GymRankColors.TextSecondary
                 )
             },
             modifier = Modifier.fillMaxWidth(),
@@ -183,6 +188,8 @@ fun AppTextField(
                 VisualTransformation.None,
             keyboardOptions = keyboardOptions,
             keyboardActions = keyboardActions,
+
+            // ⬅️ si querés seguir soportando icono a la izquierda, queda igual
             leadingIcon = leadingIcon?.let {
                 {
                     Icon(
@@ -192,20 +199,34 @@ fun AppTextField(
                     )
                 }
             },
-            trailingIcon = if (isPassword) {
-                {
-                    IconButton(onClick = { passwordVisible = !passwordVisible }) {
+
+            // ✅ Icono a la derecha:
+            // - si es password: toggle lock (como ya tenías)
+            // - si no es password y viene trailingIcon: lo muestra (ej: Email)
+            trailingIcon = when {
+                isPassword -> {
+                    {
+                        IconButton(onClick = { passwordVisible = !passwordVisible }) {
+                            Icon(
+                                imageVector = if (passwordVisible) Icons.Filled.Lock else Icons.Outlined.Lock,
+                                contentDescription = if (passwordVisible) "Hide password" else "Show password",
+                                tint = GymRankColors.TextSecondary
+                            )
+                        }
+                    }
+                }
+                trailingIcon != null -> {
+                    {
                         Icon(
-                            imageVector = if (passwordVisible)
-                                Icons.Filled.Lock
-                            else
-                                Icons.Outlined.Lock,
-                            contentDescription = if (passwordVisible) "Hide password" else "Show password",
+                            imageVector = trailingIcon,
+                            contentDescription = null,
                             tint = GymRankColors.TextSecondary
                         )
                     }
                 }
-            } else null,
+                else -> null
+            },
+
             colors = OutlinedTextFieldDefaults.colors(
                 focusedTextColor = GymRankColors.TextPrimary,
                 unfocusedTextColor = GymRankColors.TextPrimary,
@@ -236,6 +257,7 @@ fun AppTextField(
         }
     }
 }
+
 
 @Composable
 fun SocialButton(
@@ -330,5 +352,161 @@ fun TrophyIcon(
             style = MaterialTheme.typography.displayMedium,
             textAlign = TextAlign.Center
         )
+    }
+}
+
+@Composable
+fun OnboardingScaffold(
+    currentStep: Int,
+    totalSteps: Int,
+    title: String,
+    subtitle: String?,
+    onBack: (() -> Unit)?,
+    hero: (@Composable () -> Unit)? = null,
+    content: @Composable ColumnScope.() -> Unit,
+    bottomBar: @Composable () -> Unit
+) {
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(
+                brush = Brush.verticalGradient(
+                    colors = listOf(
+                        DesignTokens.Colors.BackgroundBase,
+                        DesignTokens.Colors.BackgroundBase.copy(alpha = 0.98f)
+                    )
+                )
+            )
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(horizontal = DesignTokens.Spacing.lg)
+                .padding(top = DesignTokens.Spacing.lg, bottom = DesignTokens.Spacing.xxl),
+            verticalArrangement = Arrangement.spacedBy(DesignTokens.Spacing.lg)
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                if (onBack != null) {
+                    IconButton(onClick = onBack) {
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Volver", tint = DesignTokens.Colors.TextPrimary)
+                    }
+                }
+                Spacer(Modifier.width(DesignTokens.Spacing.md))
+                StepperDots(currentStep = currentStep, totalSteps = totalSteps)
+            }
+            if (hero != null) {
+                Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) { hero() }
+            }
+            Text(title, style = MaterialTheme.typography.headlineMedium, color = DesignTokens.Colors.TextPrimary, fontWeight = FontWeight.Bold)
+            if (!subtitle.isNullOrBlank()) {
+                Text(subtitle, style = MaterialTheme.typography.bodyMedium, color = DesignTokens.Colors.TextSecondary)
+            }
+
+            content()
+        }
+        Box(
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .fillMaxWidth()
+                .padding(DesignTokens.Spacing.lg)
+        ) { bottomBar() }
+    }
+}
+
+@Composable
+fun StepperDots(currentStep: Int, totalSteps: Int) {
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        repeat(totalSteps) { index ->
+            val filled = index <= currentStep
+            Box(
+                modifier = Modifier
+                    .size(8.dp)
+                    .clip(CircleShape)
+                    .background(if (filled) GymRankColors.PrimaryAccent else Color.Transparent)
+                    .border(1.dp, DesignTokens.Colors.DividerSubtle, CircleShape)
+            )
+        }
+    }
+}
+
+@Composable
+fun PrimaryCtaButton(text: String, onClick: () -> Unit, enabled: Boolean = true) {
+    Button(
+        onClick = onClick,
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(58.dp),
+        enabled = enabled,
+        shape = RoundedCornerShape(DesignTokens.CornerRadius.pillLarge),
+        colors = ButtonDefaults.buttonColors(
+            containerColor = GymRankColors.PrimaryAccent,
+            contentColor = GymRankColors.PrimaryAccentText,
+            disabledContainerColor = DesignTokens.Colors.DividerSubtle,
+            disabledContentColor = DesignTokens.Colors.TextSecondary
+        )
+    ) {
+        Text(text, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+    }
+}
+
+@Composable
+fun SecondaryTextButton(text: String, onClick: () -> Unit) {
+    TextButton(onClick = onClick) {
+        Text(text, color = DesignTokens.Colors.TextSecondary)
+    }
+}
+
+@Composable
+fun SelectableOptionCard(
+    title: String,
+    selected: Boolean,
+    icon: ImageVector? = null,
+    onClick: () -> Unit
+) {
+    val bg = if (selected) DesignTokens.Colors.SurfaceInputs else DesignTokens.Colors.SurfaceElevated
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(DesignTokens.CornerRadius.card))
+            .clickable(onClick = onClick),
+        color = bg
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(DesignTokens.Spacing.md),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(DesignTokens.Spacing.md)
+        ) {
+            if (icon != null) {
+                Icon(icon, contentDescription = null, tint = DesignTokens.Colors.TextPrimary)
+            }
+            Text(title, color = DesignTokens.Colors.TextPrimary)
+        }
+    }
+}
+
+@Composable
+fun IconListItemRow(icon: ImageVector, title: String, subtitle: String? = null) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(DesignTokens.Spacing.md)
+    ) {
+        Box(
+            modifier = Modifier
+                .size(40.dp)
+                .clip(RoundedCornerShape(12.dp))
+                .background(DesignTokens.Colors.SurfaceInputs),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(icon, contentDescription = null, tint = GymRankColors.PrimaryAccent)
+        }
+        Column(modifier = Modifier.weight(1f)) {
+            Text(title, color = DesignTokens.Colors.TextPrimary, style = MaterialTheme.typography.bodyLarge)
+            if (subtitle != null) Text(subtitle, color = DesignTokens.Colors.TextSecondary, style = MaterialTheme.typography.bodySmall)
+        }
     }
 }

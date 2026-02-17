@@ -7,6 +7,7 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Email
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -20,6 +21,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.example.gymrank.domain.model.User
 import com.example.gymrank.ui.components.*
 import com.example.gymrank.ui.screens.signup.SignUpBottomSheet
 import com.example.gymrank.ui.theme.DesignTokens
@@ -30,9 +32,10 @@ import kotlinx.coroutines.launch
 @Composable
 fun LoginScreen(
     viewModel: LoginViewModel = viewModel(),
-    onLoginSuccess: () -> Unit,
-    onSignUpSuccess: () -> Unit,
-    onNavigateBack: (() -> Unit)? = null
+    onLoginSuccess: (User) -> Unit,
+    onSignUpSuccess: (User) -> Unit,
+    onNavigateBack: (() -> Unit)? = null,
+    openSignUpOnStart: Boolean = false
 ) {
     val uiState by viewModel.uiState.collectAsState()
     val email by viewModel.email.collectAsState()
@@ -47,8 +50,15 @@ fun LoginScreen(
 
     LaunchedEffect(uiState) {
         if (uiState is LoginUiState.Success) {
-            onLoginSuccess()
+            val user = (uiState as LoginUiState.Success).user
+            onLoginSuccess(user)
             viewModel.resetUiState()
+        }
+    }
+
+    LaunchedEffect(openSignUpOnStart) {
+        if (openSignUpOnStart) {
+            showSignUpSheet = true
         }
     }
 
@@ -86,14 +96,12 @@ fun LoginScreen(
             ) {
                 Spacer(modifier = Modifier.height(DesignTokens.Spacing.xxl))
 
-                // Trophy Icon
                 TrophyIcon(size = 80)
 
                 Spacer(modifier = Modifier.height(DesignTokens.Spacing.lg))
 
-                // Title
                 Text(
-                    text = "Gym Rank",
+                    text = "Fit Rank",
                     style = MaterialTheme.typography.headlineLarge,
                     fontSize = 36.sp,
                     fontWeight = FontWeight.Bold,
@@ -102,7 +110,6 @@ fun LoginScreen(
 
                 Spacer(modifier = Modifier.height(DesignTokens.Spacing.sm))
 
-                // Subtitle
                 Text(
                     text = "¿Listo para escalar el ranking argentino?",
                     style = MaterialTheme.typography.bodyLarge,
@@ -113,11 +120,12 @@ fun LoginScreen(
 
                 Spacer(modifier = Modifier.height(DesignTokens.Spacing.xxl))
 
-                // Email Field
+                // ✅ Email Field (icono a la derecha)
                 AppTextField(
                     value = email,
                     onValueChange = { viewModel.onEmailChange(it) },
                     label = "Correo o usuario",
+                    trailingIcon = Icons.Filled.Email, // ✅ A LA DERECHA
                     isError = emailError != null,
                     errorMessage = emailError,
                     keyboardOptions = KeyboardOptions(
@@ -155,12 +163,9 @@ fun LoginScreen(
 
                 Spacer(modifier = Modifier.height(DesignTokens.Spacing.sm))
 
-                // Forgot Password
                 TextButton(
                     onClick = {
-                        scope.launch {
-                            snackbarHostState.showSnackbar("Próximamente")
-                        }
+                        scope.launch { snackbarHostState.showSnackbar("Próximamente") }
                     },
                     modifier = Modifier.align(Alignment.End)
                 ) {
@@ -174,7 +179,6 @@ fun LoginScreen(
 
                 Spacer(modifier = Modifier.height(DesignTokens.Spacing.lg))
 
-                // Login Button
                 PrimaryButton(
                     text = "ENTRAR →",
                     onClick = { viewModel.onLoginClick() },
@@ -182,7 +186,6 @@ fun LoginScreen(
                     isLoading = uiState is LoginUiState.Loading
                 )
 
-                // Error message
                 if (uiState is LoginUiState.Error) {
                     Spacer(modifier = Modifier.height(DesignTokens.Spacing.md))
                     Text(
@@ -195,34 +198,24 @@ fun LoginScreen(
 
                 Spacer(modifier = Modifier.height(DesignTokens.Spacing.xl))
 
-                // Or Divider
                 DividerWithText(text = "O continuá con")
 
                 Spacer(modifier = Modifier.height(DesignTokens.Spacing.lg))
 
-                // Social Buttons Row
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(DesignTokens.Spacing.md)
                 ) {
                     SocialButton(
                         text = "Google",
-                        onClick = {
-                            scope.launch {
-                                snackbarHostState.showSnackbar("Próximamente")
-                            }
-                        },
+                        onClick = { scope.launch { snackbarHostState.showSnackbar("Próximamente") } },
                         modifier = Modifier.weight(1f),
                         enabled = uiState !is LoginUiState.Loading
                     )
 
                     SocialButton(
                         text = "Apple",
-                        onClick = {
-                            scope.launch {
-                                snackbarHostState.showSnackbar("Próximamente")
-                            }
-                        },
+                        onClick = { scope.launch { snackbarHostState.showSnackbar("Próximamente") } },
                         modifier = Modifier.weight(1f),
                         enabled = uiState !is LoginUiState.Loading
                     )
@@ -230,7 +223,6 @@ fun LoginScreen(
 
                 Spacer(modifier = Modifier.height(DesignTokens.Spacing.xl))
 
-                // Sign Up Link
                 Row(
                     horizontalArrangement = Arrangement.Center,
                     verticalAlignment = Alignment.CenterVertically
@@ -255,15 +247,12 @@ fun LoginScreen(
             }
         }
 
-        // SignUp Bottom Sheet
         if (showSignUpSheet) {
             SignUpBottomSheet(
                 onDismiss = { showSignUpSheet = false },
-                onSignUpSuccess = onSignUpSuccess,
+                onSignUpSuccess = { user: User -> onSignUpSuccess(user) },
                 onShowSnackbar = { message ->
-                    scope.launch {
-                        snackbarHostState.showSnackbar(message)
-                    }
+                    scope.launch { snackbarHostState.showSnackbar(message) }
                 }
             )
         }

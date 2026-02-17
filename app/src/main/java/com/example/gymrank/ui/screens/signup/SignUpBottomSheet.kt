@@ -17,12 +17,16 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.gymrank.ui.components.*
 import com.example.gymrank.ui.theme.DesignTokens
 import com.example.gymrank.ui.theme.GymRankColors
+import com.example.gymrank.domain.model.User
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Email
+
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SignUpBottomSheet(
     onDismiss: () -> Unit,
-    onSignUpSuccess: () -> Unit,
+    onSignUpSuccess: (User) -> Unit,
     onShowSnackbar: (String) -> Unit,
     viewModel: SignUpViewModel = viewModel()
 ) {
@@ -92,6 +96,7 @@ fun SignUpBottomSheet(
                 value = uiState.email,
                 onValueChange = { viewModel.onEmailChange(it) },
                 label = "Correo electrónico",
+                trailingIcon = Icons.Filled.Email,
                 enabled = !uiState.isLoading,
                 isError = uiState.emailError != null,
                 errorMessage = uiState.emailError,
@@ -143,9 +148,9 @@ fun SignUpBottomSheet(
             PrimaryButton(
                 text = "CREAR CUENTA",
                 onClick = {
-                    viewModel.signUp {
+                    viewModel.signUp { user ->
                         onDismiss()
-                        onSignUpSuccess()
+                        onSignUpSuccess(user)
                     }
                 },
                 enabled = !uiState.isLoading,

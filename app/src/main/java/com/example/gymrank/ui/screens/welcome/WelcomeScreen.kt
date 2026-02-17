@@ -22,12 +22,20 @@ import com.example.gymrank.ui.components.PrimaryButton
 import com.example.gymrank.ui.components.SecondaryButton
 import com.example.gymrank.ui.theme.DesignTokens
 import com.example.gymrank.ui.theme.GymRankColors
+import com.example.gymrank.ui.screens.signup.SignUpBottomSheet
+import kotlinx.coroutines.launch
 
 @Composable
 fun WelcomeScreen(
-    onNavigateToSelectGym: () -> Unit
+    onStartSignUp: () -> Unit,
+    onNavigateToLogin: () -> Unit,
+    onSignUpSuccessNavigate: () -> Unit
 ) {
+    // Estado local para abrir/cerrar el sheet de registro en la misma pantalla
+    var showSignUpSheet by remember { mutableStateOf(false) }
+
     val snackbarHostState = remember { SnackbarHostState() }
+    val scope = rememberCoroutineScope()
 
     Scaffold(
         snackbarHost = { SnackbarHost(snackbarHostState) },
@@ -109,7 +117,7 @@ fun WelcomeScreen(
                                     fontWeight = FontWeight.Bold
                                 )
                             ) {
-                                append("GYM ")
+                                append("FIT ")
                             }
                             withStyle(
                                 style = SpanStyle(
@@ -152,14 +160,14 @@ fun WelcomeScreen(
                 ) {
                     PrimaryButton(
                         text = "EMPEZAR",
-                        onClick = onNavigateToSelectGym
+                        onClick = { showSignUpSheet = true }
                     )
 
                     Spacer(modifier = Modifier.height(DesignTokens.Spacing.md))
 
                     SecondaryButton(
                         text = "¿Ya tenés cuenta?",
-                        onClick = onNavigateToSelectGym
+                        onClick = onNavigateToLogin
                     )
 
                     Spacer(modifier = Modifier.height(DesignTokens.Spacing.lg))
@@ -177,5 +185,19 @@ fun WelcomeScreen(
                 }
             }
         }
+    }
+
+    // Render del BottomSheet de registro (mismo que la pantalla SignUp)
+    if (showSignUpSheet) {
+        SignUpBottomSheet(
+            onDismiss = { showSignUpSheet = false },
+            onSignUpSuccess = {
+                showSignUpSheet = false
+                onSignUpSuccessNavigate()
+            },
+            onShowSnackbar = { message ->
+                scope.launch { snackbarHostState.showSnackbar(message) }
+            }
+        )
     }
 }

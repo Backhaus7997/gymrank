@@ -1,5 +1,7 @@
 package com.example.gymrank.ui.screens.home
 
+import com.example.gymrank.domain.model.Workout
+
 data class HomeUiState(
     val userName: String = "Usuario",
     val hasGym: Boolean = false,
@@ -8,7 +10,8 @@ data class HomeUiState(
     val currentRanking: Int? = null,
     val currentPoints: Int? = null,
     val challenges: List<ChallengeCard> = emptyList(),
-    val isLoading: Boolean = false
+    val isLoading: Boolean = false,
+    val lastWorkout: Workout? = null
 )
 
 data class ChallengeCard(

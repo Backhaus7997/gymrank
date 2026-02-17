@@ -9,6 +9,8 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import com.example.gymrank.domain.model.User
+import com.example.gymrank.ui.session.SessionViewModel
 
 class SignUpViewModel(
     private val authRepository: AuthRepository = AuthRepositoryImpl()
@@ -29,7 +31,7 @@ class SignUpViewModel(
         _uiState.update { it.copy(confirmPassword = confirmPassword, confirmPasswordError = null, error = null) }
     }
 
-    fun signUp(onSuccess: () -> Unit) {
+    fun signUp(onSuccess: (User) -> Unit) {
         val state = _uiState.value
 
         // Clear previous errors
@@ -67,9 +69,9 @@ class SignUpViewModel(
 
         viewModelScope.launch {
             authRepository.signUp(state.email, state.password)
-                .onSuccess {
+                .onSuccess { user ->
                     _uiState.update { it.copy(isLoading = false) }
-                    onSuccess()
+                    onSuccess(user)
                 }
                 .onFailure { error ->
                     _uiState.update {
@@ -88,5 +90,9 @@ class SignUpViewModel(
 
     fun clearError() {
         _uiState.update { it.copy(error = null) }
+    }
+
+    fun onSignUpSuccess(sessionViewModel: SessionViewModel, navigateToOnboarding: () -> Unit, navigateToHome: () -> Unit) {
+        sessionViewModel.decidePostAuthNavigation(navigateToOnboarding, navigateToHome)
     }
 }
