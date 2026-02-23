@@ -34,6 +34,8 @@ import androidx.compose.ui.unit.sp
 import com.example.gymrank.ui.components.GlassCard
 import com.example.gymrank.ui.theme.DesignTokens
 import com.example.gymrank.ui.theme.GymRankColors
+import androidx.compose.foundation.layout.BoxWithConstraints
+
 
 @Composable
 fun ChallengesScreen(
@@ -165,7 +167,10 @@ private fun FeatureButton(
 ) {
     val gradient = Brush.verticalGradient(listOf(surface, surface.copy(alpha = 0.86f)))
 
-    GlassCard(modifier = modifier) {
+    GlassCard(
+        modifier = modifier,
+        contentPadding = PaddingValues(0.dp)
+    ) {
         Surface(
             onClick = item.onClick,
             shape = RoundedCornerShape(16.dp),
@@ -196,26 +201,34 @@ private fun FeatureButton(
                     )
                 }
 
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        item.title,
-                        color = textPrimary,
-                        fontSize = 13.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis,
-                        lineHeight = 14.sp
-                    )
-                    Spacer(Modifier.height(2.dp))
-                    Text(
-                        item.subtitle,
-                        color = textSecondary,
-                        fontSize = 13.sp,
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis,
-                        lineHeight = 14.sp
-                    )
+                BoxWithConstraints(modifier = Modifier.weight(1f)) {
+                    val isNarrow = maxWidth < 140.dp
+
+                    val titleSize = if (isNarrow) 12.sp else 13.sp
+                    val subtitleSize = if (isNarrow) 12.sp else 13.sp
+
+                    Column {
+                        Text(
+                            text = item.title,
+                            color = textPrimary,
+                            fontSize = titleSize,
+                            fontWeight = FontWeight.SemiBold,
+                            maxLines = 1, // clave para que no haga 2 líneas raras
+                            overflow = TextOverflow.Ellipsis,
+                            lineHeight = (titleSize.value + 1).sp
+                        )
+                        Spacer(Modifier.height(2.dp))
+                        Text(
+                            text = item.subtitle,
+                            color = textSecondary,
+                            fontSize = subtitleSize,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis,
+                            lineHeight = (subtitleSize.value + 1).sp
+                        )
+                    }
                 }
+
 
                 Box(
                     modifier = Modifier

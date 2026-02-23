@@ -22,7 +22,7 @@ object GymRankColors {
     val TextSecondary = Color(0xFF9AA5A1) // Gray-green
 
     // Primary Accent (Soft Green - NOT neon)
-    val PrimaryAccent = Color(0xFF2EF2A0) // Soft mint green
+    val PrimaryAccent = Color(0xFF33ED9E) // Soft mint green
     val PrimaryAccentPressed = Color(0xFF1EBE7C) // Darker when pressed
     val PrimaryAccentText = Color(0xFF000000) // Black text on accent
 

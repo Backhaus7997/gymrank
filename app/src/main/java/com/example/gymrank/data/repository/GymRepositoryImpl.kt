@@ -1,31 +1,32 @@
 package com.example.gymrank.data.repository
 
 import com.example.gymrank.domain.model.Gym
-import com.example.gymrank.domain.repository.GymRepository
-import kotlinx.coroutines.delay
+import com.google.firebase.firestore.FirebaseFirestore
+import kotlinx.coroutines.tasks.await
 
-class GymRepositoryImpl : GymRepository {
+class GymRepositoryImpl(
+    private val db: FirebaseFirestore = FirebaseFirestore.getInstance()
+) {
+    suspend fun getGyms(): Result<List<Gym>> {
+        return try {
+            val snapshot = db.collection("gyms")
+                .whereEqualTo("isActive", true) // opcional
+                .get()
+                .await()
 
-    override suspend fun getGyms(): Result<List<Gym>> {
-        // Simulate network delay
-        delay(1000)
+            val gyms = snapshot.documents.map { doc ->
+                Gym(
+                    id = doc.id,
+                    name = doc.getString("name") ?: "",
+                    city = doc.getString("city") ?: "",
+                    address = doc.getString("address") ?: "",
+                    isActive = doc.getBoolean("isActive") ?: true
+                )
+            }
 
-        // Mock gym data - Argentine gyms
-        val gyms = listOf(
-            Gym(id = "1", name = "Iron Temple", city = "Buenos Aires"),
-            Gym(id = "2", name = "Titan Gym", city = "Córdoba"),
-            Gym(id = "3", name = "Beast Factory", city = "Rosario"),
-            Gym(id = "4", name = "Fuerza Sur", city = "La Plata"),
-            Gym(id = "5", name = "Power House", city = "Mendoza"),
-            Gym(id = "6", name = "Sparta Fitness", city = "Mar del Plata"),
-            Gym(id = "7", name = "Alpha Training", city = "Salta"),
-            Gym(id = "8", name = "Evolution Gym", city = "San Miguel de Tucumán"),
-            Gym(id = "9", name = "Warrior Zone", city = "Santa Fe"),
-            Gym(id = "10", name = "Gladiator Gym", city = "Neuquén"),
-            Gym(id = "11", name = "Peak Performance", city = "Bahía Blanca"),
-            Gym(id = "12", name = "Iron Paradise", city = "San Juan")
-        )
-
-        return Result.success(gyms)
+            Result.success(gyms)
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
     }
 }

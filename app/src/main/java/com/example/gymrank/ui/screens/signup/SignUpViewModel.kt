@@ -84,6 +84,29 @@ class SignUpViewModel(
         }
     }
 
+    // ✅ NUEVO: Google signup/login
+    // - idToken viene de GoogleSignInAccount.idToken
+    fun signInWithGoogle(idToken: String, onSuccess: (User) -> Unit) {
+        // Start
+        _uiState.update { it.copy(isLoading = true, error = null) }
+
+        viewModelScope.launch {
+            authRepository.signInWithGoogle(idToken)
+                .onSuccess { user ->
+                    _uiState.update { it.copy(isLoading = false) }
+                    onSuccess(user)
+                }
+                .onFailure { error ->
+                    _uiState.update {
+                        it.copy(
+                            isLoading = false,
+                            error = error.message ?: "Error al iniciar con Google"
+                        )
+                    }
+                }
+        }
+    }
+
     private fun isValidEmail(email: String): Boolean {
         return android.util.Patterns.EMAIL_ADDRESS.matcher(email).matches()
     }
@@ -92,7 +115,11 @@ class SignUpViewModel(
         _uiState.update { it.copy(error = null) }
     }
 
-    fun onSignUpSuccess(sessionViewModel: SessionViewModel, navigateToOnboarding: () -> Unit, navigateToHome: () -> Unit) {
+    fun onSignUpSuccess(
+        sessionViewModel: SessionViewModel,
+        navigateToOnboarding: () -> Unit,
+        navigateToHome: () -> Unit
+    ) {
         sessionViewModel.decidePostAuthNavigation(navigateToOnboarding, navigateToHome)
     }
 }

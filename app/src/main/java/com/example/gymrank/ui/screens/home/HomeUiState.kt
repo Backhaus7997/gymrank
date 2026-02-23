@@ -1,6 +1,7 @@
 package com.example.gymrank.ui.screens.home
 
 import com.example.gymrank.domain.model.Workout
+import com.example.gymrank.ui.components.MuscleId
 
 data class HomeUiState(
     val userName: String = "Usuario",
@@ -11,7 +12,13 @@ data class HomeUiState(
     val currentPoints: Int? = null,
     val challenges: List<ChallengeCard> = emptyList(),
     val isLoading: Boolean = false,
-    val lastWorkout: Workout? = null
+
+    val lastWorkout: Workout? = null,
+
+    // ✅ NUEVO: counts reales semanales (para pintar)
+    val weekFrontCounts: Map<MuscleId, Int> = emptyMap(),
+    val weekBackCounts: Map<MuscleId, Int> = emptyMap(),
+    val weekWorkoutsCount: Int = 0
 )
 
 data class ChallengeCard(

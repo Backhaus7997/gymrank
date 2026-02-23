@@ -1,10 +1,12 @@
 package com.example.gymrank.domain.model
 
 data class Gym(
-    val id: String,
-    val name: String,
-    val city: String
-) {
+    val id: String = "",
+    val name: String = "",
+    val city: String = "",
+    val address: String = "",
+    val isActive: Boolean = true
+){
     val initials: String
         get() = name.split(" ")
             .take(2)

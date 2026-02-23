@@ -49,13 +49,16 @@ object MuscleSvgRegistry {
         MuscleId.Triceps to pathFromSvg(
             "M76,48 C78,54 78,60 76,64 L72,62 L70,56 Z"
         ),
-        MuscleId.Legs to pathFromSvg(
+        MuscleId.Quads to pathFromSvg(
             "M44,90 C46,112 54,112 56,90 L56,170 L44,170 Z"
         ),
         MuscleId.Glutes to pathFromSvg(
             "M40,84 C50,88 60,84 62,92 L38,92 Z"
         ),
         MuscleId.Calves to pathFromSvg(
+            "M46,170 C48,178 52,178 54,170 L54,190 L46,190 Z"
+        ),
+        MuscleId.Traps to pathFromSvg(
             "M46,170 C48,178 52,178 54,170 L54,190 L46,190 Z"
         )
     )
@@ -74,7 +77,7 @@ object MuscleSvgRegistry {
         MuscleId.Triceps to pathFromSvg(
             "M76,50 C78,56 78,62 76,66 L72,64 L70,58 Z"
         ),
-        MuscleId.Legs to pathFromSvg(
+        MuscleId.Hamstrings to pathFromSvg(
             "M44,92 C46,114 54,114 56,92 L56,172 L44,172 Z"
         ),
         MuscleId.Glutes to pathFromSvg(

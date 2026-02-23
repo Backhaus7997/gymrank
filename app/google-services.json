@@ -1,0 +1,47 @@
+{
+  "project_info": {
+    "project_number": "699333937211",
+    "project_id": "fitrank-49b8d",
+    "storage_bucket": "fitrank-49b8d.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:699333937211:android:d6f02020ba89e50c95b41e",
+        "android_client_info": {
+          "package_name": "com.example.gymrank"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "699333937211-5de9cu9vr2t98f542oqko9vvccohuv09.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.example.gymrank",
+            "certificate_hash": "9b282ba2ff34d22c9ff3110b91eeb1f22bec09de"
+          }
+        },
+        {
+          "client_id": "699333937211-ngoh3u7jjqs1svh079v72opsg95r47al.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDrsUe3cuCmsiewMVr8hEIDw4GV8SdqMBs"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "699333937211-ngoh3u7jjqs1svh079v72opsg95r47al.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

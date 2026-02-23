@@ -1,5 +1,6 @@
 package com.example.gymrank.ui.screens.home
 
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -12,44 +13,336 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.FitnessCenter
 import androidx.compose.material.icons.filled.Notifications
+import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Timeline
 import androidx.compose.material3.*
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.remember
+import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.gymrank.R
-import com.example.gymrank.ui.components.BodySvg
+import com.example.gymrank.data.repository.WorkoutRepositoryFirestoreImpl
+import com.example.gymrank.domain.model.Workout
+import com.example.gymrank.ui.components.BodyWithMuscleMasks
 import com.example.gymrank.ui.components.GlassCard
 import com.example.gymrank.ui.components.MuscleId
 import com.example.gymrank.ui.session.SessionViewModel
 import com.example.gymrank.ui.theme.DesignTokens
 import com.example.gymrank.ui.theme.GymRankColors
-import coil.compose.AsyncImage
-import androidx.compose.ui.layout.ContentScale
+import com.google.firebase.auth.FirebaseAuth
+import com.google.firebase.firestore.FirebaseFirestore
+import java.util.Calendar
+import java.util.Locale
+import kotlin.math.max
 
+// ============================================
+// Screen
+// ============================================
 
 @Composable
 fun HomeScreen(
     sessionViewModel: SessionViewModel,
     viewModel: HomeViewModel = viewModel(),
     onLogWorkout: () -> Unit = {},
-    onOpenRanking: () -> Unit = {}
+    onOpenRanking: () -> Unit = {},
+    onLogout: () -> Unit = {}
 ) {
     val selectedGym by sessionViewModel.selectedGym.collectAsState()
     val uiState by viewModel.uiState.collectAsState()
 
-    selectedGym?.let { gym -> viewModel.setGymData(gym) }
+    LaunchedEffect(selectedGym) {
+        selectedGym?.let { viewModel.setGymData(it) }
+    }
+
+    // ✅ SETS POR MUSCULO (semana) -> sigue conectado a entrenamientos reales
+    val workoutRepo = remember { WorkoutRepositoryFirestoreImpl() }
+    val allWorkouts by remember { workoutRepo.getWorkouts() }.collectAsState(initial = emptyList())
+    val weekRange = remember { currentWeekRangeMillis() }
+
+    val weekWorkouts = remember(allWorkouts, weekRange) {
+        allWorkouts.filter { w ->
+            val ts = w.timestampMillis ?: w.createdAt ?: 0L
+            ts in weekRange.first until weekRange.second
+        }
+    }
+
+    val setsByMuscleItems = remember(weekWorkouts) {
+        buildSetsByMuscleItemsThisWeek(weekWorkouts)
+    }
+
+    // ============================================
+    // ✅ Calendar selection (default = today)
+    // ============================================
+
+    val dayLabelsShort = remember { listOf("L", "M", "M", "J", "V", "S", "D") }
+    val dayLabelsLong = remember { listOf("Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo") }
+    val dayKeys = remember { listOf("mon", "tue", "wed", "thu", "fri", "sat", "sun") }
+
+    val todayIndex = remember { todayIndexMondayFirst() } // 0..6
+    var selectedDayIndex by remember { mutableIntStateOf(todayIndex) }
+
+    // ============================================
+    // ✅ Routine Plan - Firestore (stored per day)
+    // ============================================
+
+    val uid = remember { FirebaseAuth.getInstance().currentUser?.uid.orEmpty() }
+    val db = remember { FirebaseFirestore.getInstance() }
+
+    // Cache local del plan semanal: dayKey -> muscles
+    var weekPlan by remember { mutableStateOf<Map<String, List<String>>>(emptyMap()) }
+    var isPlanLoading by remember { mutableStateOf(false) }
+    var planError by remember { mutableStateOf<String?>(null) }
+    var saveStatus by remember { mutableStateOf<String?>(null) }
+
+    // ✅ Auto-ocultar mensaje de éxito luego de un tiempo
+    LaunchedEffect(saveStatus) {
+        // Solo auto-ocultar mensajes de éxito
+        if (saveStatus != null && saveStatus!!.contains("✅")) {
+            kotlinx.coroutines.delay(2500) // 2.5s
+            // Evita borrar si cambió durante la espera
+            if (saveStatus != null && saveStatus!!.contains("✅")) {
+                saveStatus = null
+            }
+        }
+    }
+
+    // UI modals
+    var showPlanDaysModal by remember { mutableStateOf(false) }
+    var showMusclePickerModal by remember { mutableStateOf(false) }
+    var editingDayIndex by remember { mutableIntStateOf(0) }
+
+    val allMuscleOptions = remember {
+        listOf(
+            "Pecho",
+            "Espalda",
+            "Femorales",
+            "Hombros",
+            "Bíceps",
+            "Tríceps",
+            "Abdomen",
+            "Glúteos",
+            "Cuadriceps",
+            "Pantorrillas",
+            "Trapecios",
+            "Antebrazos"
+        )
+    }
+
+    fun normalizeMuscles(list: List<String>): List<String> =
+        list.map { it.trim() }
+            .filter { it.isNotBlank() }
+            .distinctBy { it.lowercase(Locale.getDefault()) }
+
+    fun loadWeekPlan() {
+        planError = null
+        saveStatus = null
+
+        if (uid.isBlank()) {
+            planError = "No hay usuario logueado."
+            weekPlan = emptyMap()
+            return
+        }
+
+        isPlanLoading = true
+        db.collection("users")
+            .document(uid)
+            .collection("routinePlan")
+            .get()
+            .addOnSuccessListener { qs ->
+                val map = mutableMapOf<String, List<String>>()
+                qs.documents.forEach { doc ->
+                    val key = doc.id
+                    val muscles = (doc.get("muscles") as? List<*>)?.mapNotNull { it as? String }.orEmpty()
+                    map[key] = normalizeMuscles(muscles)
+                }
+                weekPlan = map
+                isPlanLoading = false
+            }
+            .addOnFailureListener { e ->
+                isPlanLoading = false
+                weekPlan = emptyMap()
+                planError = e.message ?: "Error cargando plan"
+            }
+    }
+
+    fun saveDayPlan(dayKey: String, muscles: List<String>) {
+        planError = null
+        saveStatus = null
+
+        if (uid.isBlank()) {
+            saveStatus = "No hay usuario logueado."
+            return
+        }
+
+        val normalized = normalizeMuscles(muscles)
+        val payload = hashMapOf(
+            "muscles" to normalized,
+            "updatedAt" to System.currentTimeMillis()
+        )
+
+        db.collection("users")
+            .document(uid)
+            .collection("routinePlan")
+            .document(dayKey)
+            .set(payload)
+            .addOnSuccessListener {
+                weekPlan = weekPlan.toMutableMap().apply { put(dayKey, normalized) }
+                saveStatus = "Plan guardado!"
+            }
+            .addOnFailureListener { e ->
+                saveStatus = e.message ?: "Error guardando plan"
+            }
+    }
+
+    // Cargar plan al entrar / cuando cambia el usuario
+    LaunchedEffect(uid) {
+        loadWeekPlan()
+    }
+
+    val selectedDayKey = dayKeys.getOrNull(selectedDayIndex) ?: "mon"
+    val selectedDayMuscles = weekPlan[selectedDayKey].orEmpty()
+
+    // ============================================
+    // ✅ BODY COUNTS: ahora vienen del plan del día seleccionado
+    // ============================================
+
+    val (resolvedFront, resolvedBack) = remember(selectedDayMuscles) {
+        buildMuscleCountsFromRoutinePlan(selectedDayMuscles)
+    }
+
+    // ============================================
+    // ✅ Calendar progress: workouts reales de la semana
+    // ============================================
+
+    val completedThisWeek = remember(todayIndex) {
+        (todayIndex + 1).coerceIn(0, 7)
+    }
+
+    // ============================================
+    // UI
+    // ============================================
+
+    // Modal 1: Lista de días
+    if (showPlanDaysModal) {
+        AlertDialog(
+            onDismissRequest = { showPlanDaysModal = false },
+            title = { Text("Cargar plan") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    dayLabelsLong.forEachIndexed { idx, label ->
+                        val key = dayKeys[idx]
+                        val count = weekPlan[key]?.size ?: 0
+
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(DesignTokens.Colors.SurfaceElevated)
+                                .border(1.dp, DesignTokens.Colors.SurfaceInputs, RoundedCornerShape(12.dp))
+                                .clickable {
+                                    editingDayIndex = idx
+                                    showPlanDaysModal = false
+                                    showMusclePickerModal = true
+                                }
+                                .padding(horizontal = 12.dp, vertical = 12.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = label,
+                                color = DesignTokens.Colors.TextPrimary,
+                                fontWeight = FontWeight.SemiBold,
+                                modifier = Modifier.weight(1f)
+                            )
+                            Text(
+                                text = if (count == 0) "—" else count.toString(),
+                                color = DesignTokens.Colors.TextSecondary,
+                                fontSize = 12.sp
+                            )
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showPlanDaysModal = false }) {
+                    Text("Cerrar")
+                }
+            }
+        )
+    }
+
+    // Modal 2: Selector de músculos para un día
+    if (showMusclePickerModal) {
+        val editKey = dayKeys.getOrNull(editingDayIndex) ?: "mon"
+        val editDayLabel = dayLabelsLong.getOrNull(editingDayIndex) ?: "Día"
+
+        var tempSelected by remember(editKey, weekPlan) {
+            mutableStateOf(weekPlan[editKey].orEmpty().toSet())
+        }
+
+        AlertDialog(
+            onDismissRequest = { showMusclePickerModal = false },
+            title = { Text(editDayLabel) },
+            text = {
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    Text(
+                        text = "Elegí los músculos para este día",
+                        fontSize = 12.sp,
+                        color = DesignTokens.Colors.TextSecondary
+                    )
+                    Spacer(Modifier.height(6.dp))
+
+                    allMuscleOptions.forEach { m ->
+                        val checked = tempSelected.contains(m)
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(DesignTokens.Colors.SurfaceElevated)
+                                .border(1.dp, DesignTokens.Colors.SurfaceInputs, RoundedCornerShape(12.dp))
+                                .clickable {
+                                    tempSelected = if (checked) tempSelected - m else tempSelected + m
+                                }
+                                .padding(horizontal = 12.dp, vertical = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = m,
+                                modifier = Modifier.weight(1f),
+                                color = DesignTokens.Colors.TextPrimary
+                            )
+                            if (checked) {
+                                Text("✓", color = GymRankColors.PrimaryAccent, fontWeight = FontWeight.Bold)
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        saveDayPlan(editKey, tempSelected.toList())
+                        showMusclePickerModal = false
+                    }
+                ) { Text("Guardar") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showMusclePickerModal = false }) {
+                    Text("Cancelar")
+                }
+            }
+        )
+    }
 
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
@@ -59,7 +352,8 @@ fun HomeScreen(
         item {
             HomeTopBar(
                 userName = uiState.userName,
-                onOpenRanking = onOpenRanking
+                onOpenRanking = onOpenRanking,
+                onLogout = onLogout
             )
         }
 
@@ -72,36 +366,45 @@ fun HomeScreen(
         }
 
         item {
-            val (frontCounts, backCounts) = buildMuscleCounts(uiState)
             MusclesTrainedThisWeekCardPro(
-                frontCounts = frontCounts,
-                backCounts = backCounts,
+                frontCounts = resolvedFront,
+                backCounts = resolvedBack,
                 modifier = Modifier.padding(horizontal = 16.dp),
                 onSettingsClick = { /* TODO */ }
             )
         }
 
+        // ✅ Calendar
         item {
             WorkoutCalendarCard(
                 modifier = Modifier.padding(horizontal = 16.dp),
-                weeklyGoal = 8,
-                completed = 0
+                weeklyGoal = 7,
+                completed = completedThisWeek,
+                dayLabelsShort = dayLabelsShort,
+                todayIndex = todayIndex,
+                selectedDayIndex = selectedDayIndex,
+                onSelectDay = { selectedDayIndex = it }
+            )
+        }
+
+        // ✅ Mi rutina (en feed)
+        item {
+            RoutineSummaryCard(
+                modifier = Modifier.padding(horizontal = 16.dp),
+                selectedDayIndex = selectedDayIndex,
+                dayLabelsLong = dayLabelsLong,
+                musclesForSelectedDay = selectedDayMuscles,
+                isLoading = isPlanLoading,
+                error = planError,
+                saveStatus = saveStatus,
+                onOpenPlan = { showPlanDaysModal = true }
             )
         }
 
         item {
             SetsByMuscleCard(
                 modifier = Modifier.padding(horizontal = 16.dp),
-                items = listOf(
-                    "Pecho" to 0,
-                    "Espalda" to 0,
-                    "Piernas" to 0,
-                    "Hombros" to 0,
-                    "Bíceps" to 0,
-                    "Tríceps" to 0,
-                    "Abdomen" to 0,
-                    "Glúteos" to 0
-                ),
+                items = setsByMuscleItems,
                 onSeeMore = { /* TODO */ }
             )
         }
@@ -118,8 +421,30 @@ fun HomeScreen(
 @Composable
 fun HomeTopBar(
     userName: String,
-    onOpenRanking: () -> Unit
+    onOpenRanking: () -> Unit,
+    onLogout: () -> Unit
 ) {
+    var showLogoutDialog by remember { mutableStateOf(false) }
+
+    if (showLogoutDialog) {
+        AlertDialog(
+            onDismissRequest = { showLogoutDialog = false },
+            title = { Text("Cerrar sesión") },
+            text = { Text("¿Querés cerrar sesión ahora?") },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        showLogoutDialog = false
+                        onLogout()
+                    }
+                ) { Text("Sí, salir") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showLogoutDialog = false }) { Text("Cancelar") }
+            }
+        )
+    }
+
     TopAppBar(
         title = {
             Column {
@@ -153,14 +478,13 @@ fun HomeTopBar(
                     .clip(CircleShape)
                     .background(DesignTokens.Colors.SurfaceElevated)
                     .border(1.dp, DesignTokens.Colors.SurfaceInputs, CircleShape)
-                    .clickable { onOpenRanking() },
+                    .clickable { showLogoutDialog = true },
                 contentAlignment = Alignment.Center
             ) {
-                Text(
-                    text = userName.firstOrNull()?.uppercase() ?: "A",
-                    fontSize = 18.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = GymRankColors.PrimaryAccent
+                Icon(
+                    imageVector = Icons.Default.Person,
+                    contentDescription = "Perfil / Cerrar sesión",
+                    tint = GymRankColors.PrimaryAccent
                 )
             }
 
@@ -288,7 +612,7 @@ private fun MusclesTrainedThisWeekCardPro(
                 )
                 Spacer(Modifier.height(4.dp))
                 Text(
-                    text = "Basado en entrenamientos cargados",
+                    text = "Basado en tu rutina configurada",
                     fontSize = 12.sp,
                     color = DesignTokens.Colors.TextSecondary
                 )
@@ -304,9 +628,7 @@ private fun MusclesTrainedThisWeekCardPro(
         }
 
         Spacer(Modifier.height(12.dp))
-
         MuscleIntensityLegend(modifier = Modifier.fillMaxWidth())
-
         Spacer(Modifier.height(14.dp))
 
         Row(
@@ -332,19 +654,12 @@ private fun MusclesTrainedThisWeekCardPro(
         Spacer(Modifier.height(10.dp))
 
         Text(
-            text = "* Basado en entrenamientos completados",
+            text = "* Basado en el día seleccionado (plan semanal)",
             fontSize = 12.sp,
             color = DesignTokens.Colors.TextSecondary
         )
     }
 }
-
-// ============================================
-// BODY (SVG) — override por IDs
-// ============================================
-
-private const val BODY_FRONT_IMAGE_URL = "https://images.pexels.com/photos/1552106/pexels-photo-1552106.jpeg"
-private const val BODY_BACK_IMAGE_URL  = "https://images.pexels.com/photos/1552106/pexels-photo-1552106.jpeg"
 
 @Composable
 private fun BodyCanvas(
@@ -365,8 +680,7 @@ private fun BodyCanvas(
 
         Spacer(Modifier.height(8.dp))
 
-        val isFront = title.lowercase().contains("frente")
-        val imageUrl = if (isFront) BODY_FRONT_IMAGE_URL else BODY_BACK_IMAGE_URL
+        val isFront = title.lowercase(Locale.getDefault()).contains("frente")
 
         Box(
             modifier = Modifier
@@ -377,80 +691,30 @@ private fun BodyCanvas(
                 .border(1.dp, DesignTokens.Colors.SurfaceInputs, RoundedCornerShape(18.dp)),
             contentAlignment = Alignment.Center
         ) {
-            AsyncImage(
-                model = imageUrl,
-                contentDescription = "Body $title",
+            BodyWithMuscleMasks(
+                isFront = isFront,
+                counts = counts,
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(12.dp),
-                contentScale = ContentScale.Fit
+                    .padding(12.dp)
             )
         }
     }
 }
 
-
-private fun svgIdsForMuscle(id: MuscleId, isFront: Boolean): List<String> {
-    return when (id) {
-        MuscleId.Chest -> if (isFront) listOf("chest_l", "chest_r") else emptyList()
-        MuscleId.Abs -> if (isFront) listOf("abs_upper", "abs_mid", "abs_lower") else emptyList()
-        MuscleId.Shoulders ->
-            if (isFront) listOf("deltoid_l", "deltoid_r")
-            else listOf("rear_deltoid_l", "rear_deltoid_r")
-
-        MuscleId.Biceps -> if (isFront) listOf("biceps_l", "biceps_r") else emptyList()
-        MuscleId.Triceps -> if (isFront) emptyList() else listOf("triceps_l", "triceps_r")
-
-        MuscleId.Back -> if (isFront) emptyList() else listOf("back_upper", "back_lower")
-
-        MuscleId.Glutes -> if (isFront) emptyList() else listOf("glutes_l", "glutes_r")
-
-        MuscleId.Legs ->
-            if (isFront) listOf("quad_l", "quad_r")
-            else listOf("hamstring_l", "hamstring_r")
-
-        MuscleId.Calves ->
-            if (isFront) listOf("calf_front_l", "calf_front_r")
-            else listOf("calf_l", "calf_r")
-    }
-}
-
-private fun buildSvgOverrides(
-    counts: Map<MuscleId, Int>,
-    isFront: Boolean
-): Map<String, Color> {
-    val c1 = GymRankColors.PrimaryAccent.copy(alpha = 0.28f)
-    val c2 = GymRankColors.PrimaryAccent.copy(alpha = 0.58f)
-    val c3 = GymRankColors.PrimaryAccent.copy(alpha = 0.92f)
-
-    fun colorForCount(c: Int): Color? = when {
-        c <= 0 -> null
-        c == 1 -> c1
-        c == 2 -> c2
-        else -> c3
-    }
-
-    val out = mutableMapOf<String, Color>()
-
-    counts.forEach { (muscleId, count) ->
-        val col = colorForCount(count) ?: return@forEach
-        svgIdsForMuscle(muscleId, isFront).forEach { svgId ->
-            out[svgId] = col
-        }
-    }
-
-    return out
-}
-
 // ============================================
-// CALENDAR
+// CALENDAR (SELECTABLE + TODAY)
 // ============================================
 
 @Composable
 private fun WorkoutCalendarCard(
     modifier: Modifier = Modifier,
     weeklyGoal: Int,
-    completed: Int
+    completed: Int,
+    dayLabelsShort: List<String>,
+    todayIndex: Int,
+    selectedDayIndex: Int,
+    onSelectDay: (Int) -> Unit
 ) {
     GlassCard(modifier = modifier) {
         Text(
@@ -498,38 +762,234 @@ private fun WorkoutCalendarCard(
         Spacer(Modifier.height(12.dp))
 
         LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            items(listOf("Lun", "Mar", "Mié", "Jue", "Vie", "Sáb", "Dom")) { day ->
-                DayPill(day = day, done = false)
+            items(dayLabelsShort.size) { idx ->
+                val isToday = idx == todayIndex
+                val isSelected = idx == selectedDayIndex
+
+                DayPillSelectable(
+                    day = dayLabelsShort[idx],
+                    isToday = isToday,
+                    isSelected = isSelected,
+                    onClick = { onSelectDay(idx) }
+                )
             }
         }
     }
 }
 
 @Composable
-private fun DayPill(day: String, done: Boolean) {
-    val bg =
-        if (done) GymRankColors.PrimaryAccent.copy(alpha = 0.14f)
-        else DesignTokens.Colors.SurfaceElevated
+private fun DayPillSelectable(
+    day: String,
+    isToday: Boolean,
+    isSelected: Boolean,
+    onClick: () -> Unit
+) {
+    val bg = when {
+        isSelected -> GymRankColors.PrimaryAccent.copy(alpha = 0.18f)
+        else -> DesignTokens.Colors.SurfaceElevated
+    }
 
-    val stroke =
-        if (done) GymRankColors.PrimaryAccent.copy(alpha = 0.55f)
-        else DesignTokens.Colors.SurfaceInputs
+    val stroke = when {
+        isSelected -> GymRankColors.PrimaryAccent.copy(alpha = 0.85f)
+        isToday -> GymRankColors.PrimaryAccent.copy(alpha = 0.45f)
+        else -> DesignTokens.Colors.SurfaceInputs
+    }
 
-    val txt =
-        if (done) GymRankColors.PrimaryAccent
-        else DesignTokens.Colors.TextPrimary
+    val txt = when {
+        isSelected -> GymRankColors.PrimaryAccent
+        else -> DesignTokens.Colors.TextPrimary
+    }
 
     Box(
         modifier = Modifier
             .height(44.dp)
-            .width(56.dp)
+            .width(48.dp)
             .clip(RoundedCornerShape(14.dp))
             .background(bg)
-            .border(1.dp, stroke, RoundedCornerShape(14.dp)),
+            .border(1.dp, stroke, RoundedCornerShape(14.dp))
+            .clickable { onClick() },
         contentAlignment = Alignment.Center
     ) {
         Text(text = day, color = txt, fontWeight = FontWeight.SemiBold)
     }
+}
+
+// ============================================
+// ✅ Mi Rutina card (feed)
+// ============================================
+
+@Composable
+private fun RoutineSummaryCard(
+    modifier: Modifier = Modifier,
+    selectedDayIndex: Int,
+    dayLabelsLong: List<String>,
+    musclesForSelectedDay: List<String>,
+    isLoading: Boolean,
+    error: String?,
+    saveStatus: String?,
+    onOpenPlan: () -> Unit
+) {
+    GlassCard(modifier = modifier) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = "Mi rutina",
+                    fontSize = 20.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = DesignTokens.Colors.TextPrimary
+                )
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    text = "Plan semanal de entrenamiento",
+                    fontSize = 12.sp,
+                    color = DesignTokens.Colors.TextSecondary
+                )
+            }
+
+            TextButton(onClick = onOpenPlan) {
+                Text(
+                    text = "Cargar plan",
+                    color = GymRankColors.PrimaryAccent,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+        }
+
+        Spacer(Modifier.height(10.dp))
+
+        if (isLoading) {
+            LinearProgressIndicator(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(6.dp)
+                    .clip(RoundedCornerShape(999.dp)),
+                color = GymRankColors.PrimaryAccent,
+                trackColor = DesignTokens.Colors.SurfaceInputs
+            )
+            Spacer(Modifier.height(10.dp))
+        }
+
+        if (error != null) {
+            Text(text = error, color = GymRankColors.Error, fontSize = 12.sp)
+            Spacer(Modifier.height(8.dp))
+        }
+
+        if (saveStatus != null) {
+            Text(
+                text = saveStatus,
+                color = if (saveStatus.contains("✅")) GymRankColors.PrimaryAccent else GymRankColors.Error,
+                fontSize = 12.sp
+            )
+            Spacer(Modifier.height(8.dp))
+        }
+
+        val todayIdx = remember { todayIndexMondayFirst() }
+        val selectedDayLabel = dayLabelsLong.getOrNull(selectedDayIndex).orEmpty()
+        val isSelectedToday = selectedDayIndex == todayIdx
+
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            // ✅ Badge "HOY" SOLO si el seleccionado es hoy
+            if (isSelectedToday) {
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(999.dp))
+                        .background(GymRankColors.PrimaryAccent.copy(alpha = 0.18f))
+                        .border(1.dp, GymRankColors.PrimaryAccent.copy(alpha = 0.55f), RoundedCornerShape(999.dp))
+                        .padding(horizontal = 10.dp, vertical = 6.dp)
+                ) {
+                    Text(
+                        text = "HOY",
+                        color = GymRankColors.PrimaryAccent,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+            }
+
+            Text(
+                text = selectedDayLabel,
+                color = DesignTokens.Colors.TextPrimary,
+                fontWeight = FontWeight.Bold,
+                fontSize = 14.sp
+            )
+        }
+
+        Spacer(Modifier.height(10.dp))
+
+        if (musclesForSelectedDay.isEmpty()) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(14.dp))
+                    .background(DesignTokens.Colors.SurfaceElevated)
+                    .border(1.dp, DesignTokens.Colors.SurfaceInputs, RoundedCornerShape(14.dp))
+                    .padding(12.dp)
+            ) {
+                Text(
+                    text = "No hay músculos cargados para este día. Tocá “Cargar plan” para configurarlo.",
+                    color = DesignTokens.Colors.TextSecondary,
+                    fontSize = 12.sp,
+                    lineHeight = 16.sp
+                )
+            }
+        } else {
+            FlowChips(musclesForSelectedDay)
+        }
+    }
+}
+
+@Composable
+private fun FlowChips(items: List<String>) {
+    val rows = remember(items) { chunkToRows(items, maxPerRow = 3) }
+
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        rows.forEach { row ->
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                row.forEach { label ->
+                    Chip(label)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun Chip(label: String) {
+    Box(
+        modifier = Modifier
+            .clip(RoundedCornerShape(999.dp))
+            .background(DesignTokens.Colors.SurfaceElevated)
+            .border(
+                width = 1.dp,
+                color = DesignTokens.Colors.SurfaceInputs,
+                shape = RoundedCornerShape(999.dp)
+            )
+            .padding(horizontal = 12.dp, vertical = 7.dp)
+    ) {
+        Text(
+            text = label,
+            color = DesignTokens.Colors.TextPrimary,
+            fontSize = 12.sp,
+            fontWeight = FontWeight.SemiBold
+        )
+    }
+}
+
+private fun chunkToRows(items: List<String>, maxPerRow: Int): List<List<String>> {
+    if (items.isEmpty()) return emptyList()
+    val out = mutableListOf<List<String>>()
+    var i = 0
+    while (i < items.size) {
+        out.add(items.subList(i, minOf(i + maxPerRow, items.size)))
+        i += maxPerRow
+    }
+    return out
 }
 
 // ============================================
@@ -573,11 +1033,11 @@ private fun SetsByMuscleCard(
 
         Spacer(Modifier.height(12.dp))
 
-        val max = (items.maxOfOrNull { it.second } ?: 0).coerceAtLeast(1)
+        val maxVal = (items.maxOfOrNull { it.second } ?: 0).coerceAtLeast(1)
 
         LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             items(items) { (name, value) ->
-                SetMiniCard(name = name, value = value, max = max)
+                SetMiniCard(name = name, value = value, max = maxVal)
             }
         }
 
@@ -646,10 +1106,12 @@ private fun SetMiniCard(
     }
 }
 
+// ============================================
+// LEGEND
+// ============================================
+
 @Composable
-private fun MuscleIntensityLegend(
-    modifier: Modifier = Modifier
-) {
+private fun MuscleIntensityLegend(modifier: Modifier = Modifier) {
     val c1 = GymRankColors.PrimaryAccent.copy(alpha = 0.35f)
     val c2 = GymRankColors.PrimaryAccent.copy(alpha = 0.65f)
     val c3 = GymRankColors.PrimaryAccent.copy(alpha = 0.95f)
@@ -673,10 +1135,7 @@ private fun MuscleIntensityLegend(
 }
 
 @Composable
-private fun LegendDot(
-    label: String,
-    color: Color
-) {
+private fun LegendDot(label: String, color: Color) {
     Row(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -698,32 +1157,191 @@ private fun LegendDot(
 }
 
 // ============================================
-// Helpers (counts)
+// HELPERS
 // ============================================
 
-private fun buildMuscleCounts(
-    uiState: HomeUiState
+private fun buildMuscleCountsFromRoutinePlan(
+    muscles: List<String>
 ): Pair<Map<MuscleId, Int>, Map<MuscleId, Int>> {
-    val last = uiState.lastWorkout
-    val muscles: List<String> = last?.muscles ?: emptyList()
-    val counts = mutableMapOf<MuscleId, Int>().withDefault { 0 }
 
-    fun inc(id: MuscleId) { counts[id] = counts.getOrDefault(id, 0) + 1 }
+    fun canonToMuscleId(name: String): MuscleId? = when (name.trim().lowercase(Locale.getDefault())) {
+        // FRONT
+        "pecho", "pectorales", "pectoral" -> MuscleId.Chest
+        "abdomen", "abs", "core" -> MuscleId.Abs
+        "oblicuos", "oblicuo", "obliques" -> MuscleId.Obliques
+        "biceps", "bíceps", "bicep" -> MuscleId.Biceps
+        "antebrazos", "antebrazo", "forearms", "forearm" -> MuscleId.Forearms
+        "cuadriceps", "cuádriceps", "quads", "quadriceps", "piernas" -> MuscleId.Quads
+        "pantorrillas", "pantorrilla", "gemelos", "calves", "calf" -> MuscleId.Calves
 
-    muscles.forEach { m ->
-        when (m.lowercase()) {
-            "pecho" -> inc(MuscleId.Chest)
-            "espalda" -> inc(MuscleId.Back)
-            "piernas" -> inc(MuscleId.Legs)
-            "hombros" -> inc(MuscleId.Shoulders)
-            "biceps", "bíceps" -> inc(MuscleId.Biceps)
-            "triceps", "tríceps" -> inc(MuscleId.Triceps)
-            "abdomen", "core" -> inc(MuscleId.Abs)
-            "gluteos", "glúteos" -> inc(MuscleId.Glutes)
-            "pantorrillas", "gemelos" -> inc(MuscleId.Calves)
+        // BOTH
+        "hombros", "deltoides", "deltoide", "shoulders" -> MuscleId.Shoulders
+        "trapecios", "trapecio", "traps", "trap" -> MuscleId.Traps
+
+        // BACK
+        "triceps", "tríceps", "tricep" -> MuscleId.Triceps
+        "espalda", "back" -> MuscleId.Back
+        "dorsales", "dorsal", "lats", "dorsal ancho" -> MuscleId.Lats
+        "lumbar", "lumbares", "lower back", "espalda baja" -> MuscleId.LowerBack
+        "gluteos", "glúteos", "glutes", "glute" -> MuscleId.Glutes
+        "isquios", "isquiotibiales", "hamstrings", "femorales" -> MuscleId.Hamstrings
+
+        else -> null
+    }
+
+    val front = mutableMapOf<MuscleId, Int>()
+    val back = mutableMapOf<MuscleId, Int>()
+
+    fun incFront(id: MuscleId) { front[id] = (front[id] ?: 0) + 1 }
+    fun incBack(id: MuscleId) { back[id] = (back[id] ?: 0) + 1 }
+
+    // ✅ Distinct: si elegís "Pecho" dos veces, no suma
+    muscles.mapNotNull { canonToMuscleId(it) }
+        .distinct()
+        .forEach { id ->
+            when (id) {
+                // ambos lados
+                MuscleId.Shoulders, MuscleId.Traps, MuscleId.Forearms, MuscleId.Calves -> {
+                    incFront(id); incBack(id)
+                }
+
+                // solo frente
+                MuscleId.Chest, MuscleId.Abs, MuscleId.Obliques, MuscleId.Biceps, MuscleId.Quads -> incFront(id)
+
+                // solo espalda
+                MuscleId.Triceps, MuscleId.Lats, MuscleId.Back, MuscleId.LowerBack, MuscleId.Glutes, MuscleId.Hamstrings -> incBack(id)
+
+                else -> incFront(id)
+            }
+        }
+
+    return front to back
+}
+
+private fun currentWeekRangeMillis(): Pair<Long, Long> {
+    val cal = Calendar.getInstance(Locale.getDefault())
+    cal.firstDayOfWeek = Calendar.MONDAY
+
+    val dayOfWeek = cal.get(Calendar.DAY_OF_WEEK)
+    val diff = (dayOfWeek + 5) % 7
+    cal.add(Calendar.DAY_OF_YEAR, -diff)
+
+    cal.set(Calendar.HOUR_OF_DAY, 0)
+    cal.set(Calendar.MINUTE, 0)
+    cal.set(Calendar.SECOND, 0)
+    cal.set(Calendar.MILLISECOND, 0)
+
+    val start = cal.timeInMillis
+    cal.add(Calendar.DAY_OF_YEAR, 7)
+    val end = cal.timeInMillis
+    return start to end
+}
+
+private fun buildSetsByMuscleItemsThisWeek(workouts: List<Workout>): List<Pair<String, Int>> {
+    val ordered = listOf(
+        "Pecho",
+        "Espalda",
+        "Femorales",
+        "Hombros",
+        "Bíceps",
+        "Tríceps",
+        "Abdomen",
+        "Glúteos",
+        "Cuadriceps",
+        "Pantorrillas",
+        "Trapecios",
+        "Antebrazos"
+    )
+
+    fun canon(name: String): String? = when (name.trim().lowercase(Locale.getDefault())) {
+        "pecho", "pectorales", "pectoral" -> "Pecho"
+        "espalda", "back", "dorsales", "dorsal", "lats" -> "Espalda"
+        "hombros", "deltoides", "deltoide" -> "Hombros"
+        "trapecios", "trapecio" -> "Trapecios"
+        "bíceps", "biceps", "bicep" -> "Bíceps"
+        "tríceps", "triceps", "tricep" -> "Tríceps"
+        "antebrazos", "antebrazo" -> "Antebrazos"
+        "abdomen", "abs", "core" -> "Abdomen"
+        "glúteos", "gluteos", "glutes", "glute" -> "Glúteos"
+        "cuádriceps", "cuadriceps", "quads", "quadriceps" -> "Cuadriceps"
+        "pantorrillas", "pantorrilla", "gemelos", "calves", "calf" -> "Pantorrillas"
+        "isquios", "isquiotibiales", "hamstrings", "femorales" -> "Femorales"
+        else -> null
+    }
+
+    val acc = linkedMapOf<String, Int>().apply { ordered.forEach { put(it, 0) } }
+
+    workouts.forEach { w ->
+        val muscles = w.muscles.mapNotNull { canon(it) }.distinct()
+        if (muscles.isEmpty()) return@forEach
+
+        val totalSetsRaw = w.exercises.sumOf { max(0, it.sets) }
+        val totalSets = if (totalSetsRaw > 0) totalSetsRaw else 1
+
+        val base = totalSets / muscles.size
+        var rem = totalSets % muscles.size
+
+        muscles.forEach { m ->
+            val add = base + if (rem > 0) { rem -= 1; 1 } else 0
+            acc[m] = (acc[m] ?: 0) + add
         }
     }
 
-    // por ahora: mismo mapa para frente y espalda
-    return counts.toMap() to counts.toMap()
+    return ordered.map { it to (acc[it] ?: 0) }
+}
+
+private fun todayIndexMondayFirst(): Int {
+    val cal = Calendar.getInstance(Locale.getDefault())
+    val dow = cal.get(Calendar.DAY_OF_WEEK)
+    return when (dow) {
+        Calendar.MONDAY -> 0
+        Calendar.TUESDAY -> 1
+        Calendar.WEDNESDAY -> 2
+        Calendar.THURSDAY -> 3
+        Calendar.FRIDAY -> 4
+        Calendar.SATURDAY -> 5
+        Calendar.SUNDAY -> 6
+        else -> 0
+    }
+}
+
+// Opcional
+@Composable
+fun MuscleFront(modifier: Modifier = Modifier) {
+    Image(
+        painter = painterResource(R.drawable.muscle_front),
+        contentDescription = "Músculos (frente)",
+        modifier = modifier
+    )
+}
+
+@Composable
+fun MuscleBack(modifier: Modifier = Modifier) {
+    Image(
+        painter = painterResource(R.drawable.muscle_back),
+        contentDescription = "Músculos (espalda)",
+        modifier = modifier
+    )
+}
+
+private fun countUniqueWorkoutDaysThisWeek(workouts: List<Workout>): Int {
+    if (workouts.isEmpty()) return 0
+
+    // Normaliza cada workout a "día" (midnight) y cuenta únicos
+    val uniqueDays = workouts.mapNotNull { w ->
+        val ts = w.timestampMillis ?: w.createdAt
+        ts?.let { startOfDayMillis(it) }
+    }.toSet()
+
+    return uniqueDays.size
+}
+
+private fun startOfDayMillis(epochMillis: Long): Long {
+    val cal = Calendar.getInstance(Locale.getDefault())
+    cal.timeInMillis = epochMillis
+    cal.set(Calendar.HOUR_OF_DAY, 0)
+    cal.set(Calendar.MINUTE, 0)
+    cal.set(Calendar.SECOND, 0)
+    cal.set(Calendar.MILLISECOND, 0)
+    return cal.timeInMillis
 }

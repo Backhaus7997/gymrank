@@ -1,29 +1,20 @@
 package com.example.gymrank.ui.screens.selectgym
 
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.*
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
-import androidx.compose.runtime.getValue
+import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.gymrank.domain.model.Gym
 import com.example.gymrank.domain.model.GymUi
 import com.example.gymrank.ui.components.GradientBackground
 import com.example.gymrank.ui.components.GymCard
-import com.example.gymrank.ui.theme.GymRankColors
 
 @Composable
 fun SelectGymScreen(
@@ -32,116 +23,85 @@ fun SelectGymScreen(
 ) {
     val uiState by viewModel.uiState.collectAsState()
 
-    Scaffold(
-        containerColor = Color(0xFF000000),
-        topBar = {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(24.dp)
-            ) {
-                Text(
-                    text = "Elegí tu gimnasio",
-                    fontSize = 32.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = Color.White
-                )
-                Spacer(modifier = Modifier.height(8.dp))
-                Text(
-                    text = "Seleccioná el gym donde entrenás",
-                    fontSize = 15.sp,
-                    color = Color(0xFF8E8E93)
-                )
+    // ✅ search local
+    var query by remember { mutableStateOf("") }
+
+    LaunchedEffect(Unit) {
+        viewModel.loadGyms()
+    }
+
+    GradientBackground {
+        when {
+            uiState.isLoading -> {
+                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    CircularProgressIndicator()
+                }
             }
-        }
-    ) { paddingValues ->
-        GradientBackground {
-            Column(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(paddingValues)
-                    .padding(horizontal = 20.dp)
-            ) {
-                OutlinedTextField(
-                    value = uiState.searchQuery,
-                    onValueChange = { viewModel.onSearchQueryChange(it) },
-                    modifier = Modifier.fillMaxWidth(),
-                    placeholder = { Text("Buscar por nombre o ciudad...", color = Color(0xFF8E8E93)) },
-                    leadingIcon = {
-                        Icon(
-                            imageVector = Icons.Default.Search,
-                            contentDescription = "Search",
-                            tint = Color(0xFF8E8E93)
-                        )
-                    },
-                    singleLine = true,
-                    shape = RoundedCornerShape(14.dp),
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedTextColor = Color.White,
-                        unfocusedTextColor = Color.White,
-                        focusedContainerColor = Color(0xFF1C1C1E),
-                        unfocusedContainerColor = Color(0xFF1C1C1E),
-                        focusedBorderColor = Color(0xFF2C2C2E),
-                        unfocusedBorderColor = Color(0xFF2C2C2E),
-                        cursorColor = GymRankColors.PrimaryAccent
+
+            uiState.error != null -> {
+                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    Text("Error: ${uiState.error}")
+                }
+            }
+
+            else -> {
+                // ✅ filtrar gyms por query (name o city)
+                val filteredGyms = remember(uiState.gyms, query) {
+                    val q = query.trim().lowercase()
+                    if (q.isEmpty()) uiState.gyms
+                    else uiState.gyms.filter { g ->
+                        g.name.lowercase().contains(q) || g.city.lowercase().contains(q)
+                    }
+                }
+
+                Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(horizontal = 16.dp)
+                        .padding(top = 18.dp)
+                ) {
+                    Text(
+                        text = "Elegí tu gimnasio",
+                        style = MaterialTheme.typography.headlineMedium,
+                        color = MaterialTheme.colorScheme.onBackground
                     )
-                )
 
-                Spacer(modifier = Modifier.height(20.dp))
+                    Spacer(Modifier.height(6.dp))
 
-                when {
-                    uiState.isLoading -> {
-                        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                            CircularProgressIndicator(color = GymRankColors.PrimaryAccent)
-                        }
-                    }
+                    Text(
+                        text = "Seleccioná el gym donde entrenás",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.75f)
+                    )
 
-                    uiState.error != null -> {
-                        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                Text(
-                                    text = uiState.error ?: "Error desconocido",
-                                    color = GymRankColors.Error,
-                                    textAlign = TextAlign.Center
-                                )
-                                Spacer(modifier = Modifier.height(16.dp))
-                                Button(
-                                    onClick = { viewModel.retryLoadGyms() },
-                                    colors = ButtonDefaults.buttonColors(
-                                        containerColor = GymRankColors.PrimaryAccent,
-                                        contentColor = Color(0xFF000000)
-                                    )
-                                ) { Text("Reintentar") }
-                            }
-                        }
-                    }
+                    Spacer(Modifier.height(14.dp))
 
-                    uiState.filteredGyms.isEmpty() && uiState.searchQuery.isNotBlank() -> {
-                        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                            Text(
-                                text = "No se encontraron gimnasios",
-                                style = MaterialTheme.typography.bodyLarge,
-                                color = Color(0xFF8E8E93)
+                    OutlinedTextField(
+                        value = query,
+                        onValueChange = { query = it },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true,
+                        leadingIcon = {
+                            Icon(imageVector = Icons.Default.Search, contentDescription = null)
+                        },
+                        placeholder = { Text("Buscar por nombre o ciudad...") }
+                    )
+
+                    Spacer(Modifier.height(14.dp))
+
+                    LazyColumn(
+                        modifier = Modifier.fillMaxSize(),
+                        contentPadding = PaddingValues(bottom = 24.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        items(filteredGyms) { gym ->
+                            val gymUi = gym.toGymUi()
+
+                            // ✅ USAR TU CARD LINDA (como la screenshot 2)
+                            GymCard(
+                                gym = gymUi,
+                                onJoin = { onGymSelected(gym) }
                             )
-                        }
-                    }
-
-                    else -> {
-                        LazyColumn(
-                            verticalArrangement = Arrangement.spacedBy(16.dp),
-                            modifier = Modifier.fillMaxSize(),
-                            contentPadding = PaddingValues(bottom = 20.dp)
-                        ) {
-                            items(
-                                items = uiState.filteredGyms,
-                                key = { it.id } // ✅ evita repetidos/glitches
-                            ) { gym ->
-                                GymCard(
-                                    gym = gym.toGymUi(),
-                                    onJoin = { onGymSelected(gym) },
-                                    modifier = Modifier.clickable { onGymSelected(gym) }
-                                )
-                            }
                         }
                     }
                 }
@@ -162,11 +122,10 @@ private fun Gym.toGymUi(): GymUi {
 
 /**
  * ✅ Una imagen ESPECÍFICA por gimnasio (sin pool).
- * Acá ponés 1 URL por cada gimnasio real.
  */
 private fun imageForGymName(name: String): String {
     return when (name.trim()) {
-        "Beast Factory" ->
+        "Olympia Gym" ->
             "https://images.unsplash.com/photo-1534438327276-14e5300c3a48?w=1400&auto=format&fit=crop&q=75"
 
         "Fuerza Sur" ->

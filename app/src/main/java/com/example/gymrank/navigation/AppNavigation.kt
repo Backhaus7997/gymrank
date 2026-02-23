@@ -8,7 +8,9 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -16,6 +18,8 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
+import com.example.gymrank.data.repository.UserRepositoryImpl
+import com.example.gymrank.domain.model.Gym
 import com.example.gymrank.ui.components.GymRankBottomBar
 import com.example.gymrank.ui.screens.challenges.ChallengesScreen
 import com.example.gymrank.ui.screens.challenges.subscreens.DiscoverScreen
@@ -24,6 +28,7 @@ import com.example.gymrank.ui.screens.challenges.subscreens.GambleScreen
 import com.example.gymrank.ui.screens.challenges.subscreens.QuestsScreen
 import com.example.gymrank.ui.screens.feed.FeedScreen
 import com.example.gymrank.ui.screens.home.HomeScreen
+import com.example.gymrank.ui.screens.loadworkout.LoadWorkoutScreen
 import com.example.gymrank.ui.screens.login.LoginScreen
 import com.example.gymrank.ui.screens.onboarding.OnboardingScreen
 import com.example.gymrank.ui.screens.ranking.RankingRoutes
@@ -53,14 +58,13 @@ fun AppNavigation(sessionViewModel: SessionViewModel) {
     val currentRoute = backStackEntry?.destination?.route
 
     // ✅ Bottom bar SOLO en tabs principales
-    // Ojo: details usa route "ranking_details/..." => NO debe mostrar bottom bar.
-    val showBottomBar = when {
-        currentRoute == Screen.Home.route -> true
-        currentRoute == "feed" -> true
-        currentRoute == "challenges" -> true
-        currentRoute == "workout" -> true
-        currentRoute == "rank" -> true
-        currentRoute == Screen.Ranking.route -> true
+    val showBottomBar = when (currentRoute) {
+        Screen.Home.route,
+        "feed",
+        "challenges",
+        "workout",
+        "rank",
+        Screen.Ranking.route -> true
         else -> false
     }
 
@@ -82,9 +86,55 @@ fun AppNavigation(sessionViewModel: SessionViewModel) {
                 .get<String>(NAV_FLOW_KEY)
         }.getOrNull()
         if (fromWelcome != null) return fromWelcome
+
         val fromCurrent = navController.currentBackStackEntry?.savedStateHandle?.get<String>(NAV_FLOW_KEY)
         val fromPrev = navController.previousBackStackEntry?.savedStateHandle?.get<String>(NAV_FLOW_KEY)
         return fromCurrent ?: fromPrev
+    }
+
+    // ✅ Logout centralizado
+    fun doLogout() {
+        com.google.firebase.auth.FirebaseAuth.getInstance().signOut()
+
+        navController.navigate(Screen.Welcome.route) {
+            popUpTo(Screen.Welcome.route) { inclusive = true }
+            launchSingleTop = true
+        }
+    }
+
+    // ✅ FIX: ir a CreateRoutine (no a cualquier lado)
+    fun navigateToCreateRoutine() {
+        navController.navigate("workout/create_routine") {
+            launchSingleTop = true
+        }
+    }
+
+    // ✅ FIX: ir al TAB Ranking (como si tocaras el bottom bar)
+    fun navigateToRankingTab() {
+        navController.navigate("rank") {
+            popUpTo(Screen.Home.route) { saveState = true }
+            launchSingleTop = true
+            restoreState = true
+        }
+    }
+
+    // ✅ Gate: si ya hay gym guardado -> Home, sino -> SelectGym
+    suspend fun navigateAfterAuth(userRepo: UserRepositoryImpl) {
+        val gym: Gym? = runCatching<Gym?> { userRepo.getSelectedGym() }.getOrNull()
+
+        if (gym != null) {
+            runCatching<Unit> { sessionViewModel.selectGym(gym) }
+
+            navController.navigate(Screen.Home.route) {
+                popUpTo(Screen.Welcome.route) { inclusive = true }
+                launchSingleTop = true
+            }
+        } else {
+            navController.navigate(Screen.SelectGym.route) {
+                popUpTo(Screen.Welcome.route) { inclusive = true }
+                launchSingleTop = true
+            }
+        }
     }
 
     Scaffold(
@@ -96,38 +146,53 @@ fun AppNavigation(sessionViewModel: SessionViewModel) {
             modifier = Modifier.padding(innerPadding)
         ) {
 
-            // ✅ WELCOME
+            // ✅ WELCOME (auto-redirect si ya hay sesión iniciada)
             composable(Screen.Welcome.route) {
-                WelcomeScreen(
-                    onStartSignUp = {
-                        Log.d("NavFlow", "Welcome → Login (signup)")
-                        setFlow(FLOW_SIGNUP)
-                        navController.navigate("login_signup") { launchSingleTop = true }
-                    },
-                    onNavigateToLogin = {
-                        Log.d("NavFlow", "Welcome → Login (login)")
-                        setFlow(FLOW_LOGIN)
-                        navController.navigate(Screen.Login.route) { launchSingleTop = true }
-                    },
-                    onSignUpSuccessNavigate = {
-                        Log.d("NavFlow", "Welcome → SelectGym (signup)")
-                        setFlow(FLOW_SIGNUP)
-                        navController.navigate(Screen.SelectGym.route) { launchSingleTop = true }
+                val userRepo = remember { UserRepositoryImpl() }
+                val firebaseUser = com.google.firebase.auth.FirebaseAuth.getInstance().currentUser
+
+                LaunchedEffect(firebaseUser?.uid) {
+                    if (firebaseUser != null) {
+                        navigateAfterAuth(userRepo)
                     }
-                )
+                }
+
+                if (firebaseUser != null) {
+                    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        Text("Cargando…")
+                    }
+                } else {
+                    WelcomeScreen(
+                        onStartSignUp = {
+                            setFlow(FLOW_SIGNUP)
+                            navController.navigate("login_signup") { launchSingleTop = true }
+                        },
+                        onNavigateToLogin = {
+                            setFlow(FLOW_LOGIN)
+                            navController.navigate(Screen.Login.route) { launchSingleTop = true }
+                        },
+                        onSignUpSuccessNavigate = {
+                            setFlow(FLOW_SIGNUP)
+                            navController.navigate(Screen.SelectGym.route) { launchSingleTop = true }
+                        }
+                    )
+                }
             }
 
             // ✅ LOGIN normal
             composable(Screen.Login.route) {
+                val userRepo = remember { UserRepositoryImpl() }
+
                 LoginScreen(
                     onLoginSuccess = { user ->
-                        Log.d("NavFlow", "Login success → SelectGym (login)")
                         sessionViewModel.setUser(user)
                         setFlow(FLOW_LOGIN)
-                        navController.navigate(Screen.SelectGym.route) { launchSingleTop = true }
+
+                        coroutineScope.launch {
+                            navigateAfterAuth(userRepo)
+                        }
                     },
                     onSignUpSuccess = { user ->
-                        Log.d("NavFlow", "SignUp success (from login) → SelectGym (signup)")
                         sessionViewModel.setUser(user)
                         setFlow(FLOW_SIGNUP)
                         navController.navigate(Screen.SelectGym.route) { launchSingleTop = true }
@@ -137,16 +202,19 @@ fun AppNavigation(sessionViewModel: SessionViewModel) {
 
             // ✅ LOGIN con signup abierto
             composable("login_signup") {
+                val userRepo = remember { UserRepositoryImpl() }
+
                 LoginScreen(
                     openSignUpOnStart = true,
                     onLoginSuccess = { user ->
-                        Log.d("NavFlow", "Login success (from login_signup) → SelectGym (login)")
                         sessionViewModel.setUser(user)
                         setFlow(FLOW_LOGIN)
-                        navController.navigate(Screen.SelectGym.route) { launchSingleTop = true }
+
+                        coroutineScope.launch {
+                            navigateAfterAuth(userRepo)
+                        }
                     },
                     onSignUpSuccess = { user ->
-                        Log.d("NavFlow", "SignUp success → SelectGym (signup)")
                         sessionViewModel.setUser(user)
                         setFlow(FLOW_SIGNUP)
                         navController.navigate(Screen.SelectGym.route) { launchSingleTop = true }
@@ -156,37 +224,23 @@ fun AppNavigation(sessionViewModel: SessionViewModel) {
 
             // ✅ SELECT GYM
             composable(Screen.SelectGym.route) {
+                val userRepo = remember { UserRepositoryImpl() }
+
                 SelectGymScreen(
-                    onGymSelected = { gym ->
-                        Log.d("NavFlow", "SelectGym → gym selected")
-                        runCatching { sessionViewModel.selectGym(gym) }
-
-                        val flow = getFlow()
-                        Log.d("NavFlow", "SelectGym → flow=$flow")
-
+                    onGymSelected = { gym: Gym ->
                         coroutineScope.launch {
-                            when (flow) {
-                                FLOW_SIGNUP -> {
-                                    Log.d("NavFlow", "SelectGym → Onboarding (signup flow)")
-                                    navController.navigate(Screen.Onboarding.route) {
-                                        popUpTo(Screen.Welcome.route) { inclusive = true }
-                                        launchSingleTop = true
-                                    }
-                                }
-                                FLOW_LOGIN -> {
-                                    Log.d("NavFlow", "SelectGym → Home (login flow)")
-                                    navController.navigate(Screen.Home.route) {
-                                        popUpTo(Screen.Welcome.route) { inclusive = true }
-                                        launchSingleTop = true
-                                    }
-                                }
-                                else -> {
-                                    Log.d("NavFlow", "SelectGym → Home (fallback)")
-                                    navController.navigate(Screen.Home.route) {
-                                        popUpTo(Screen.Welcome.route) { inclusive = true }
-                                        launchSingleTop = true
-                                    }
-                                }
+                            runCatching<Unit> { userRepo.saveSelectedGym(gym) }
+                                .onFailure { e -> Log.e("SelectGym", "Error guardando gym", e) }
+
+                            runCatching<Unit> { sessionViewModel.selectGym(gym) }
+
+                            val flow = getFlow()
+                            val destination =
+                                if (flow == FLOW_SIGNUP) Screen.Onboarding.route else Screen.Home.route
+
+                            navController.navigate(destination) {
+                                popUpTo(Screen.Welcome.route) { inclusive = true }
+                                launchSingleTop = true
                             }
                         }
                     }
@@ -197,7 +251,6 @@ fun AppNavigation(sessionViewModel: SessionViewModel) {
             composable(Screen.Onboarding.route) {
                 OnboardingScreen(
                     onFinished = {
-                        Log.d("NavFlow", "Onboarding finished → Home")
                         navController.navigate(Screen.Home.route) {
                             popUpTo(Screen.Welcome.route) { inclusive = true }
                             launchSingleTop = true
@@ -207,7 +260,21 @@ fun AppNavigation(sessionViewModel: SessionViewModel) {
             }
 
             // ✅ MAIN TABS
-            composable(Screen.Home.route) { HomeScreen(sessionViewModel = sessionViewModel) }
+            composable(Screen.Home.route) {
+                HomeScreen(
+                    sessionViewModel = sessionViewModel,
+
+                    // ✅ FIX: NOMBRES CORRECTOS (según tu HomeScreen)
+                    // "Cargar entreno" -> CreateRoutineScreen
+                    onLogWorkout = { navigateToCreateRoutine() },
+
+                    // "Ver ranking" -> Tab Ranking
+                    onOpenRanking = { navigateToRankingTab() },
+
+                    onLogout = { doLogout() }
+                )
+            }
+
             composable("feed") { FeedScreen() }
 
             composable("challenges") {
@@ -244,8 +311,7 @@ fun AppNavigation(sessionViewModel: SessionViewModel) {
                 )
             }
 
-            // ✅ DETAILS REAL (match exact route used by RankingRoutes.detailsRoute(...))
-            // ✅ DETAILS REAL (match exact route used by RankingRoutes.detailsRoute(...))
+            // ✅ DETAILS REAL
             composable(
                 route = RankingRoutes.Details,
                 arguments = RankingRoutes.detailsArgs
@@ -266,12 +332,14 @@ fun AppNavigation(sessionViewModel: SessionViewModel) {
                 )
             }
 
+            composable(Screen.LoadWorkout.route) {
+                LoadWorkoutScreen(
+                    onCancel = { navController.popBackStack() },
+                    onSaved = { navController.popBackStack() }
+                )
+            }
 
-
-            // ✅ (si lo usás)
-            composable(Screen.LoadWorkout.route) { PlaceholderScreen("Cargar entrenamiento") }
-
-            // ✅ SUBSCREENS CHALLENGES (sin bottom bar)
+            // ✅ SUBSCREENS CHALLENGES
             composable("challenges/discover") { DiscoverScreen(onBack = { navController.popBackStack() }) }
             composable("challenges/quests") { QuestsScreen(onBack = { navController.popBackStack() }) }
             composable("challenges/gamble") {
@@ -287,28 +355,48 @@ fun AppNavigation(sessionViewModel: SessionViewModel) {
             }
             composable("challenges/equipment") { EquipmentScreen(onBack = { navController.popBackStack() }) }
 
-            // ✅ SUBSCREENS WORKOUT (sin bottom bar)
+            // ✅ SUBSCREENS WORKOUT
             composable("workout/explore") { ExploreScreen(onBack = { navController.popBackStack() }) }
             composable("workout/coach_ai") { CoachAiScreen(onBack = { navController.popBackStack() }) }
-            composable("workout/history") { WorkoutHistoryScreen(onBack = { navController.popBackStack() }) }
+            composable("workout/history") {
+                WorkoutHistoryScreen(
+                    onBack = { navController.popBackStack() },
+                    onGoToCreate = { navController.navigate("workout/create_routine") }
+                )
+            }
             composable("workout/progress") { WorkoutProgressScreen(onBack = { navController.popBackStack() }) }
 
             // ✅ CREATE ROUTINE
             composable("workout/create_routine") {
+                val workoutRepo = remember { com.example.gymrank.data.repository.WorkoutRepositoryFirestoreImpl() }
+
                 CreateRoutineScreen(
                     onBack = { navController.popBackStack() },
-                    onCreate = { _ ->
-                        navController.popBackStack()
+                    onCreate = { draft, muscles ->
+                        coroutineScope.launch {
+                            val workout = com.example.gymrank.domain.model.Workout(
+                                timestampMillis = System.currentTimeMillis(),
+                                durationMinutes = 60,
+                                type = draft.name,
+                                muscles = muscles,
+                                intensity = "Media",
+                                notes = draft.description.trim().ifBlank { null },
+                                exercises = draft.exercises.map { ex ->
+                                    com.example.gymrank.domain.model.WorkoutExercise(
+                                        name = ex.name,
+                                        sets = ex.sets,
+                                        reps = ex.reps,
+                                        usesBodyweight = ex.isBodyWeight,
+                                        weightKg = ex.weightKg?.toInt()
+                                    )
+                                }
+                            )
+                            workoutRepo.saveWorkout(workout)
+                            navController.popBackStack()
+                        }
                     }
                 )
             }
         }
-    }
-}
-
-@Composable
-private fun PlaceholderScreen(title: String) {
-    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-        Text(text = title)
     }
 }

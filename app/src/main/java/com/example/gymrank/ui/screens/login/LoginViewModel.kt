@@ -40,18 +40,16 @@ class LoginViewModel(
     }
 
     fun onLoginClick() {
-        if (!validateInputs()) {
-            return
-        }
+        if (!validateInputs()) return
 
         viewModelScope.launch {
             _uiState.value = LoginUiState.Loading
 
-            val result = authRepository.login(_email.value, _password.value)
+            val result = authRepository.login(_email.value.trim(), _password.value)
 
             _uiState.value = result.fold(
                 onSuccess = { user -> LoginUiState.Success(user) },
-                onFailure = { error -> LoginUiState.Error(error.message ?: "Error desconocido") }
+                onFailure = { error -> LoginUiState.Error(error.message ?: "Error al iniciar sesión") }
             )
         }
     }
@@ -59,10 +57,12 @@ class LoginViewModel(
     private fun validateInputs(): Boolean {
         var isValid = true
 
-        if (_email.value.isEmpty()) {
+        val e = _email.value.trim()
+
+        if (e.isEmpty()) {
             _emailError.value = "El email es requerido"
             isValid = false
-        } else if (!isValidEmail(_email.value)) {
+        } else if (!isValidEmail(e)) {
             _emailError.value = "Email inválido"
             isValid = false
         }
@@ -83,7 +83,11 @@ class LoginViewModel(
         _uiState.value = LoginUiState.Idle
     }
 
-    fun onLoginSuccess(sessionViewModel: SessionViewModel, navigateToOnboarding: () -> Unit, navigateToHome: () -> Unit) {
+    fun onLoginSuccess(
+        sessionViewModel: SessionViewModel,
+        navigateToOnboarding: () -> Unit,
+        navigateToHome: () -> Unit
+    ) {
         sessionViewModel.decidePostAuthNavigation(navigateToOnboarding, navigateToHome)
     }
 }
