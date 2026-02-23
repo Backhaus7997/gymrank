@@ -22,13 +22,13 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
-import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material.icons.filled.FitnessCenter
 import androidx.compose.material.icons.filled.KeyboardArrowRight
@@ -58,6 +58,7 @@ import androidx.compose.material3.TextField
 import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -79,8 +80,8 @@ import com.example.gymrank.ui.theme.GymRankColors
 import kotlin.math.max
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
-import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import kotlinx.coroutines.delay
 
 // ============================
 // MODELS
@@ -359,7 +360,7 @@ private val EXERCISES_BY_MUSCLE: Map<String, List<String>> = mapOf(
 
 private fun availableExercisesFor(selectedMuscles: Set<String>): List<String> {
     val muscles = selectedMuscles
-        .filter { it != "Oblicuos" } // no hay catálogo en tu lista
+        .filter { it != "Oblicuos" }
         .toSet()
 
     val source = if (muscles.isEmpty()) {
@@ -383,8 +384,14 @@ fun CreateRoutineScreen(
     val textPrimary = runCatching { DesignTokens.Colors.TextPrimary }.getOrElse { Color.White }
     val textSecondary = runCatching { DesignTokens.Colors.TextSecondary }.getOrElse { Color(0xFF8E8E93) }
     val accent = runCatching { GymRankColors.PrimaryAccent }.getOrElse { Color(0xFF35F5A6) }
+
     val nameFocusRequester = remember { FocusRequester() }
     val keyboard = LocalSoftwareKeyboardController.current
+
+    // ✅ FIX: state de lista para poder scrollear al top sin crashear
+    val listState = rememberLazyListState()
+    var shouldFocusName by remember { mutableStateOf(false) }
+    var shouldScrollTop by remember { mutableStateOf(false) }
 
     var routineName by remember { mutableStateOf("") }
     var routineDescription by remember { mutableStateOf("") }
@@ -436,6 +443,27 @@ fun CreateRoutineScreen(
         return true
     }
 
+    // ✅ FIX: scroll al top (sin crashear)
+    LaunchedEffect(shouldScrollTop) {
+        if (!shouldScrollTop) return@LaunchedEffect
+        runCatching { listState.animateScrollToItem(0) }
+        shouldScrollTop = false
+    }
+
+    // ✅ FIX: focus + teclado en el próximo frame (evita IllegalStateException del FocusRequester)
+    LaunchedEffect(shouldFocusName) {
+        if (!shouldFocusName) return@LaunchedEffect
+
+        delay(16) // 1 frame aprox
+
+        runCatching {
+            nameFocusRequester.requestFocus()
+            keyboard?.show()
+        }
+
+        shouldFocusName = false
+    }
+
     Scaffold(
         containerColor = bg,
         topBar = {
@@ -468,7 +496,7 @@ fun CreateRoutineScreen(
             )
         },
 
-        // ✅ BOTÓN AGREGAR FLOTANTE (no se pierde al scrollear)
+        // ✅ BOTÓN AGREGAR FLOTANTE
         floatingActionButtonPosition = FabPosition.End,
         floatingActionButton = {
             ExtendedFloatingActionButton(
@@ -485,7 +513,7 @@ fun CreateRoutineScreen(
                 containerColor = accent,
                 contentColor = GymRankColors.PrimaryAccentText,
                 shape = RoundedCornerShape(999.dp),
-                modifier = Modifier.padding(bottom = 84.dp) // arriba del CTA de guardar
+                modifier = Modifier.padding(bottom = 84.dp)
             ) {
                 Icon(Icons.Filled.Add, contentDescription = null)
                 Spacer(Modifier.width(8.dp))
@@ -526,9 +554,13 @@ fun CreateRoutineScreen(
                     Button(
                         onClick = {
                             if (!validate()) {
+                                // ✅ FIX: en vez de crashear, scrollea y enfoca
                                 if (nameError != null) {
-                                    nameFocusRequester.requestFocus()
-                                    keyboard?.show()
+                                    shouldScrollTop = true
+                                    shouldFocusName = true
+                                } else {
+                                    // error por ejercicios -> al menos lo llevamos arriba
+                                    shouldScrollTop = true
                                 }
                                 return@Button
                             }
@@ -574,12 +606,13 @@ fun CreateRoutineScreen(
         }
     ) { inner ->
         LazyColumn(
+            state = listState, // ✅ CLAVE: para animateScrollToItem(0)
             modifier = Modifier
                 .fillMaxSize()
                 .padding(inner)
                 .padding(horizontal = 16.dp, vertical = 12.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp),
-            contentPadding = PaddingValues(bottom = 120.dp) // deja espacio para FAB + CTA
+            contentPadding = PaddingValues(bottom = 120.dp)
         ) {
 
             // ----------------------------
@@ -636,7 +669,7 @@ fun CreateRoutineScreen(
             }
 
             // ----------------------------
-            // MÚSCULOS (estilo 2da foto)
+            // MÚSCULOS
             // ----------------------------
             item {
                 Card(
@@ -684,10 +717,11 @@ fun CreateRoutineScreen(
                         Spacer(Modifier.height(12.dp))
 
                         MuscleGridPicker(
-                            muscles = musclesAll.filter { it != "Oblicuos" }, // si querés mostrarlo, sacá este filter
+                            muscles = musclesAll.filter { it != "Oblicuos" },
                             selected = musclesSelected,
                             onToggle = { m ->
-                                musclesSelected = if (musclesSelected.contains(m)) musclesSelected - m else musclesSelected + m
+                                musclesSelected =
+                                    if (musclesSelected.contains(m)) musclesSelected - m else musclesSelected + m
                             },
                             accent = accent
                         )
@@ -1056,7 +1090,7 @@ private fun ExerciseDropdownField(
     helperText: String = "Filtrado por músculos seleccionados"
 ) {
     var expanded by remember { mutableStateOf(false) }
-    var query by remember(expanded) { mutableStateOf("") } // se resetea al abrir/cerrar
+    var query by remember(expanded) { mutableStateOf("") }
 
     val display = if (value.isBlank()) "Seleccionar ejercicio" else value
 
@@ -1114,7 +1148,6 @@ private fun ExerciseDropdownField(
                 .menuAnchor()
         )
 
-        // ✅ “Card” look para el dropdown
         DropdownMenu(
             expanded = expanded,
             onDismissRequest = { expanded = false },
@@ -1125,7 +1158,6 @@ private fun ExerciseDropdownField(
                 .background(DesignTokens.Colors.SurfaceElevated)
                 .border(1.dp, accent.copy(alpha = 0.18f), RoundedCornerShape(18.dp))
         ) {
-            // Header con buscador + contador
             Surface(
                 color = Color.Transparent,
                 modifier = Modifier.fillMaxWidth()
@@ -1151,7 +1183,6 @@ private fun ExerciseDropdownField(
 
                     Spacer(Modifier.height(8.dp))
 
-                    // buscador
                     TextField(
                         value = query,
                         onValueChange = { query = it },
@@ -1177,7 +1208,6 @@ private fun ExerciseDropdownField(
                 }
             }
 
-            // Divider suave
             Box(
                 Modifier
                     .fillMaxWidth()
@@ -1201,7 +1231,6 @@ private fun ExerciseDropdownField(
                 return@DropdownMenu
             }
 
-            // Items más “premium”: highlight + check en seleccionado
             filtered.forEach { item ->
                 val isSelected = item == value
 
@@ -1211,7 +1240,6 @@ private fun ExerciseDropdownField(
                             Modifier.fillMaxWidth(),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            // indicador selección
                             Surface(
                                 shape = RoundedCornerShape(8.dp),
                                 color = if (isSelected) accent.copy(alpha = 0.18f) else Color.White.copy(alpha = 0.06f),
@@ -1252,9 +1280,7 @@ private fun ExerciseDropdownField(
                         .fillMaxWidth()
                         .padding(horizontal = 6.dp)
                         .clip(RoundedCornerShape(14.dp))
-                        .background(
-                            if (isSelected) accent.copy(alpha = 0.10f) else Color.Transparent
-                        )
+                        .background(if (isSelected) accent.copy(alpha = 0.10f) else Color.Transparent)
                 )
             }
         }
