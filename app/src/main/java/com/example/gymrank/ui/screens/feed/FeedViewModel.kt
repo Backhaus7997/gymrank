@@ -69,4 +69,15 @@ class FeedViewModel(
             }
         }
     }
+
+    fun removeFriend(uid: String) {
+        viewModelScope.launch {
+            runCatching {
+                repo.removeFriend(uid)
+                load() // recarga lista, desaparece del tab Amigos
+            }.onFailure {
+                _state.value = _state.value.copy(error = it.message ?: "Error dejando de seguir")
+            }
+        }
+    }
 }

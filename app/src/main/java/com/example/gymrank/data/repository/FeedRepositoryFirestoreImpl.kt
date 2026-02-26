@@ -16,18 +16,18 @@ class FeedRepositoryFirestoreImpl(
     data class UserDoc(
         val username: String = "",
         val experience: String = "Principiante",
-        val avatarUrl: String? = null
+        val avatarUrl: String? = null,
+        val feedVisibility: String = "PUBLIC" // ✅ NUEVO (en perfil)
     )
 
-    // ✅ Ahora soporta más campos para el detalle (sin romper lo anterior)
+    // ✅ workouts YA NO tienen visibility
     data class WorkoutDoc(
         val title: String = "",
         val imageUrl: String? = null,
-        val visibility: String = "PUBLIC",
         val createdAt: Any? = null,
         val exercises: List<Map<String, Any?>> = emptyList(),
 
-        // ✅ EXTRA (para detalle)
+        // extra detalle
         val description: String? = null,
         val durationMinutes: Long? = null,
         val intensity: String? = null,
@@ -60,6 +60,18 @@ class FeedRepositoryFirestoreImpl(
             days == 1L -> "Ayer"
             else -> "Hace ${days} días"
         }
+    }
+
+    suspend fun removeFriend(friendUid: String) {
+        val myUid = auth.currentUser?.uid ?: return
+        if (friendUid == myUid) return
+
+        db.collection("users")
+            .document(myUid)
+            .collection("friends")
+            .document(friendUid)
+            .delete()
+            .await()
     }
 
     private fun levelFromExperience(exp: String): Int = when (exp.trim().lowercase()) {
@@ -107,6 +119,13 @@ class FeedRepositoryFirestoreImpl(
             .await()
     }
 
+    private fun normalizeFeedVisibility(v: String?): String = v?.trim()?.uppercase() ?: "PUBLIC"
+
+    /**
+     * ✅ FEED PÚBLICO:
+     * - Solo usuarios cuyo perfil esté en PUBLIC.
+     * - No hay filtro por workout.visibility porque ya no existe.
+     */
     suspend fun getPublicFeed(maxUsers: Int = 50, perUserLimit: Long = 5): List<FeedPost> {
         val myUid = auth.currentUser?.uid ?: ""
 
@@ -119,7 +138,9 @@ class FeedRepositoryFirestoreImpl(
             .filter { it.id != myUid }
             .mapNotNull { doc ->
                 val u = doc.toObject(UserDoc::class.java) ?: return@mapNotNull null
-                doc.id to u
+                val vis = normalizeFeedVisibility(u.feedVisibility)
+                if (vis != "PUBLIC") return@mapNotNull null // ✅ clave
+                doc.id to u.copy(feedVisibility = vis)
             }
 
         val posts = mutableListOf<Pair<Long, FeedPost>>()
@@ -127,7 +148,6 @@ class FeedRepositoryFirestoreImpl(
         for ((uid, user) in users) {
             val ws = db.collection("users").document(uid)
                 .collection("workouts")
-                .whereEqualTo("visibility", "PUBLIC")
                 .orderBy("createdAt", Query.Direction.DESCENDING)
                 .limit(perUserLimit)
                 .get()
@@ -148,14 +168,14 @@ class FeedRepositoryFirestoreImpl(
 
                 val post = FeedPost(
                     id = wDoc.id,
-                    ownerUid = uid, // ✅ NUEVO
+                    ownerUid = uid,
                     userName = user.username.ifBlank { "usuario" },
                     avatarUrl = user.avatarUrl?.takeIf { it.isNotBlank() } ?: "https://i.pravatar.cc/128?u=$uid",
                     level = levelFromExperience(user.experience),
                     workoutTitle = w.title,
                     workoutImageUrl = w.imageUrl
                         ?: "https://images.unsplash.com/photo-1517836357463-d25dfeac3438?auto=format&fit=crop&w=1200&q=60",
-                    visibility = "Público",
+                    visibility = "Público", // ✅ viene del perfil
                     timestampLabel = timeLabel(ms),
                     exercises = exercises
                 )
@@ -167,6 +187,11 @@ class FeedRepositoryFirestoreImpl(
         return posts.sortedByDescending { it.first }.map { it.second }
     }
 
+    /**
+     * ✅ FEED AMIGOS:
+     * - Si el amigo está en PRIVATE -> no se muestra nada
+     * - Si está en FRIENDS o PUBLIC -> se muestra
+     */
     suspend fun getFriendsFeed(friendUids: List<String>, perFriendLimit: Long = 10): List<FeedPost> {
         if (friendUids.isEmpty()) return emptyList()
 
@@ -176,9 +201,11 @@ class FeedRepositoryFirestoreImpl(
             val userSnap = db.collection("users").document(friendUid).get().await()
             val user = userSnap.toObject(UserDoc::class.java) ?: continue
 
+            val vis = normalizeFeedVisibility(user.feedVisibility)
+            if (vis == "PRIVATE") continue // ✅ clave
+
             val ws = db.collection("users").document(friendUid)
                 .collection("workouts")
-                .whereIn("visibility", listOf("PUBLIC", "FRIENDS"))
                 .orderBy("createdAt", Query.Direction.DESCENDING)
                 .limit(perFriendLimit)
                 .get()
@@ -197,17 +224,19 @@ class FeedRepositoryFirestoreImpl(
                     )
                 }
 
+                val label = if (vis == "FRIENDS") "Amigos" else "Público"
+
                 val post = FeedPost(
                     id = wDoc.id,
-                    ownerUid = friendUid, // ✅ NUEVO
+                    ownerUid = friendUid,
                     userName = user.username.ifBlank { "usuario" },
                     avatarUrl = user.avatarUrl?.takeIf { it.isNotBlank() }
-                        ?: "https://i.pravatar.cc/128?u=$friendUid", // ✅ FIX (antes estaba $uid)
+                        ?: "https://i.pravatar.cc/128?u=$friendUid",
                     level = levelFromExperience(user.experience),
                     workoutTitle = w.title,
                     workoutImageUrl = w.imageUrl
                         ?: "https://images.unsplash.com/photo-1517836357463-d25dfeac3438?auto=format&fit=crop&w=1200&q=60",
-                    visibility = "Amigos",
+                    visibility = label,
                     timestampLabel = timeLabel(ms),
                     exercises = exercises
                 )

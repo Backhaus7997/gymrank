@@ -112,7 +112,9 @@ fun FeedScreen(
                 items(posts) { post ->
                     FeedPostCard(
                         post = post,
-                        onOpen = { onOpenWorkout(post.ownerUid, post.id) } // ✅ NUEVO
+                        canUnfollow = (selectedTab == FeedTab.FRIENDS),
+                        onUnfollow = { vm.removeFriend(post.ownerUid) },
+                        onOpen = { onOpenWorkout(post.ownerUid, post.id) }
                     )
                 }
             }
@@ -296,6 +298,8 @@ private fun TabButton(label: String, selected: Boolean, onClick: () -> Unit) {
 @Composable
 private fun FeedPostCard(
     post: FeedPost,
+    canUnfollow: Boolean,
+    onUnfollow: () -> Unit,
     onOpen: () -> Unit
 ) {
     GlassCard(glow = true) {
@@ -337,11 +341,50 @@ private fun FeedPostCard(
                         )
                     }
 
-                    Icon(
-                        Icons.Filled.Shield,
-                        contentDescription = null,
-                        tint = DesignTokens.Colors.TextSecondary
-                    )
+                    var menuOpen by remember { mutableStateOf(false) }
+                    var confirmOpen by remember { mutableStateOf(false) }
+
+                    Box {
+                        IconButton(onClick = { menuOpen = true }) {
+                            Icon(
+                                Icons.Filled.Shield,
+                                contentDescription = null,
+                                tint = DesignTokens.Colors.TextSecondary
+                            )
+                        }
+
+                        DropdownMenu(
+                            expanded = menuOpen,
+                            onDismissRequest = { menuOpen = false }
+                        ) {
+                            if (canUnfollow) {
+                                DropdownMenuItem(
+                                    text = { Text("Dejar de seguir") },
+                                    onClick = {
+                                        menuOpen = false
+                                        confirmOpen = true
+                                    }
+                                )
+                            }
+                        }
+                    }
+
+                    if (confirmOpen) {
+                        AlertDialog(
+                            onDismissRequest = { confirmOpen = false },
+                            title = { Text("Dejar de seguir") },
+                            text = { Text("¿Querés dejar de seguir a ${post.userName}?") },
+                            confirmButton = {
+                                TextButton(onClick = {
+                                    confirmOpen = false
+                                    onUnfollow()
+                                }) { Text("Sí, dejar de seguir") }
+                            },
+                            dismissButton = {
+                                TextButton(onClick = { confirmOpen = false }) { Text("Cancelar") }
+                            }
+                        )
+                    }
                 }
 
                 Spacer(Modifier.height(12.dp))

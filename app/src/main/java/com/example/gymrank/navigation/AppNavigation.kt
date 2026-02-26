@@ -7,11 +7,8 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.navigation.compose.NavHost
@@ -19,7 +16,10 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import com.example.gymrank.data.repository.UserRepositoryImpl
+import com.example.gymrank.data.repository.WorkoutRepositoryFirestoreImpl
 import com.example.gymrank.domain.model.Gym
+import com.example.gymrank.domain.model.Workout
+import com.example.gymrank.domain.model.WorkoutExercise
 import com.example.gymrank.ui.components.GymRankBottomBar
 import com.example.gymrank.ui.screens.challenges.ChallengesScreen
 import com.example.gymrank.ui.screens.challenges.subscreens.DiscoverScreen
@@ -27,6 +27,7 @@ import com.example.gymrank.ui.screens.challenges.subscreens.EquipmentScreen
 import com.example.gymrank.ui.screens.challenges.subscreens.GambleScreen
 import com.example.gymrank.ui.screens.challenges.subscreens.QuestsScreen
 import com.example.gymrank.ui.screens.feed.FeedScreen
+import com.example.gymrank.ui.screens.feed.subscreens.WorkoutDetailScreen
 import com.example.gymrank.ui.screens.home.HomeScreen
 import com.example.gymrank.ui.screens.loadworkout.LoadWorkoutScreen
 import com.example.gymrank.ui.screens.login.LoginScreen
@@ -40,23 +41,17 @@ import com.example.gymrank.ui.screens.workout.WorkoutScreen
 import com.example.gymrank.ui.screens.workout.subscreens.CoachAiScreen
 import com.example.gymrank.ui.screens.workout.subscreens.CreateRoutineScreen
 import com.example.gymrank.ui.screens.workout.subscreens.ExploreScreen
+import com.example.gymrank.ui.screens.workout.subscreens.ProgramDetailScreen
+import com.example.gymrank.ui.screens.workout.subscreens.RecoveryDetailsScreen
 import com.example.gymrank.ui.screens.workout.subscreens.WorkoutHistoryScreen
 import com.example.gymrank.ui.screens.workout.subscreens.WorkoutProgressScreen
 import com.example.gymrank.ui.session.SessionViewModel
+import com.google.firebase.auth.FirebaseAuth
+import com.google.firebase.firestore.FirebaseFirestore
+import com.google.firebase.firestore.SetOptions
 import kotlinx.coroutines.launch
-import com.example.gymrank.ui.screens.workout.subscreens.RecoveryDetailsScreen
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
-import kotlinx.coroutines.launch
-import com.example.gymrank.ui.screens.workout.subscreens.ProgramDetailScreen
-import com.example.gymrank.data.repository.WorkoutRepositoryFirestoreImpl
-import com.example.gymrank.domain.model.Workout
-import com.example.gymrank.domain.model.WorkoutExercise
-import com.example.gymrank.ui.screens.workout.subscreens.CreateRoutineScreen
-import com.example.gymrank.ui.screens.feed.subscreens.WorkoutDetailScreen
+import kotlinx.coroutines.tasks.await
 
-
-private const val NAV_FLOW_KEY = "nav_flow"
 private const val FLOW_LOGIN = "login"
 private const val FLOW_SIGNUP = "signup"
 
@@ -79,33 +74,23 @@ fun AppNavigation(sessionViewModel: SessionViewModel) {
         else -> false
     }
 
+    // ✅ Flow estable
+    var flowState by rememberSaveable { mutableStateOf(FLOW_LOGIN) }
+
+    // ✅ FLAG CLAVE: onboarding SOLO cuando venís de SIGNUP
+    // (se setea en signup y se limpia cuando terminás onboarding)
+    var shouldShowOnboarding by rememberSaveable { mutableStateOf(false) }
+
     fun setFlow(flow: String) {
-        runCatching {
-            val entry = navController.getBackStackEntry(Screen.Welcome.route)
-            entry.savedStateHandle[NAV_FLOW_KEY] = flow
-            Log.d("NavFlow", "setFlow=$flow (route=$currentRoute)")
-        }.onFailure {
-            navController.currentBackStackEntry?.savedStateHandle?.set(NAV_FLOW_KEY, flow)
-            Log.d("NavFlow", "setFlow (fallback current)=$flow (route=$currentRoute)")
-        }
+        flowState = flow
+        Log.d("NavFlow", "setFlow=$flow (route=$currentRoute)")
     }
 
-    fun getFlow(): String? {
-        val fromWelcome = runCatching {
-            navController.getBackStackEntry(Screen.Welcome.route)
-                .savedStateHandle
-                .get<String>(NAV_FLOW_KEY)
-        }.getOrNull()
-        if (fromWelcome != null) return fromWelcome
-
-        val fromCurrent = navController.currentBackStackEntry?.savedStateHandle?.get<String>(NAV_FLOW_KEY)
-        val fromPrev = navController.previousBackStackEntry?.savedStateHandle?.get<String>(NAV_FLOW_KEY)
-        return fromCurrent ?: fromPrev
-    }
-
-    // ✅ Logout centralizado
     fun doLogout() {
-        com.google.firebase.auth.FirebaseAuth.getInstance().signOut()
+        FirebaseAuth.getInstance().signOut()
+        // al logout, volvemos a default
+        flowState = FLOW_LOGIN
+        shouldShowOnboarding = false
 
         navController.navigate(Screen.Welcome.route) {
             popUpTo(Screen.Welcome.route) { inclusive = true }
@@ -113,14 +98,12 @@ fun AppNavigation(sessionViewModel: SessionViewModel) {
         }
     }
 
-    // ✅ FIX: ir a CreateRoutine (no a cualquier lado)
     fun navigateToCreateRoutine() {
         navController.navigate("workout/create_routine") {
             launchSingleTop = true
         }
     }
 
-    // ✅ FIX: ir al TAB Ranking (como si tocaras el bottom bar)
     fun navigateToRankingTab() {
         navController.navigate("rank") {
             popUpTo(Screen.Home.route) { saveState = true }
@@ -129,12 +112,29 @@ fun AppNavigation(sessionViewModel: SessionViewModel) {
         }
     }
 
+    // ✅ Parche silencioso: si falta feedVisibility, lo setea a PUBLIC
+    suspend fun ensureFeedVisibilityDefault(uid: String) {
+        val db = FirebaseFirestore.getInstance()
+        val ref = db.collection("users").document(uid)
+        val snap = ref.get().await()
+
+        if (snap.getString("feedVisibility").isNullOrBlank()) {
+            ref.set(
+                mapOf(
+                    "feedVisibility" to "PUBLIC",
+                    "updatedAt" to System.currentTimeMillis()
+                ),
+                SetOptions.merge()
+            ).await()
+        }
+    }
+
     // ✅ Gate: si ya hay gym guardado -> Home, sino -> SelectGym
     suspend fun navigateAfterAuth(userRepo: UserRepositoryImpl) {
         val gym: Gym? = runCatching<Gym?> { userRepo.getSelectedGym() }.getOrNull()
 
         if (gym != null) {
-            runCatching<Unit> { sessionViewModel.selectGym(gym) }
+            runCatching { sessionViewModel.selectGym(gym) }
 
             navController.navigate(Screen.Home.route) {
                 popUpTo(Screen.Welcome.route) { inclusive = true }
@@ -157,13 +157,18 @@ fun AppNavigation(sessionViewModel: SessionViewModel) {
             modifier = Modifier.padding(innerPadding)
         ) {
 
-            // ✅ WELCOME (auto-redirect si ya hay sesión iniciada)
+            // ✅ WELCOME
             composable(Screen.Welcome.route) {
                 val userRepo = remember { UserRepositoryImpl() }
-                val firebaseUser = com.google.firebase.auth.FirebaseAuth.getInstance().currentUser
+                val firebaseUser = FirebaseAuth.getInstance().currentUser
 
                 LaunchedEffect(firebaseUser?.uid) {
                     if (firebaseUser != null) {
+                        // ✅ sesión existente => tratar como LOGIN (no onboarding)
+                        setFlow(FLOW_LOGIN)
+                        shouldShowOnboarding = false
+
+                        runCatching { ensureFeedVisibilityDefault(firebaseUser.uid) }
                         navigateAfterAuth(userRepo)
                     }
                 }
@@ -175,15 +180,21 @@ fun AppNavigation(sessionViewModel: SessionViewModel) {
                 } else {
                     WelcomeScreen(
                         onStartSignUp = {
+                            // ✅ si el usuario toca "Empezar" => SIGNUP + onboarding obligatorio
                             setFlow(FLOW_SIGNUP)
+                            shouldShowOnboarding = true
                             navController.navigate("login_signup") { launchSingleTop = true }
                         },
                         onNavigateToLogin = {
+                            // ✅ Login => sin onboarding
                             setFlow(FLOW_LOGIN)
+                            shouldShowOnboarding = false
                             navController.navigate(Screen.Login.route) { launchSingleTop = true }
                         },
                         onSignUpSuccessNavigate = {
+                            // ✅ por si tu Welcome ya tenía este callback
                             setFlow(FLOW_SIGNUP)
+                            shouldShowOnboarding = true
                             navController.navigate(Screen.SelectGym.route) { launchSingleTop = true }
                         }
                     )
@@ -197,16 +208,29 @@ fun AppNavigation(sessionViewModel: SessionViewModel) {
                 LoginScreen(
                     onLoginSuccess = { user ->
                         sessionViewModel.setUser(user)
+
+                        // ✅ login => NO onboarding
                         setFlow(FLOW_LOGIN)
+                        shouldShowOnboarding = false
 
                         coroutineScope.launch {
+                            val uid = FirebaseAuth.getInstance().currentUser?.uid.orEmpty()
+                            if (uid.isNotBlank()) runCatching { ensureFeedVisibilityDefault(uid) }
                             navigateAfterAuth(userRepo)
                         }
                     },
                     onSignUpSuccess = { user ->
                         sessionViewModel.setUser(user)
+
+                        // ✅ signup => SI onboarding (siempre)
                         setFlow(FLOW_SIGNUP)
-                        navController.navigate(Screen.SelectGym.route) { launchSingleTop = true }
+                        shouldShowOnboarding = true
+
+                        coroutineScope.launch {
+                            val uid = FirebaseAuth.getInstance().currentUser?.uid.orEmpty()
+                            if (uid.isNotBlank()) runCatching { ensureFeedVisibilityDefault(uid) }
+                            navController.navigate(Screen.SelectGym.route) { launchSingleTop = true }
+                        }
                     }
                 )
             }
@@ -219,16 +243,29 @@ fun AppNavigation(sessionViewModel: SessionViewModel) {
                     openSignUpOnStart = true,
                     onLoginSuccess = { user ->
                         sessionViewModel.setUser(user)
+
+                        // ✅ login => NO onboarding
                         setFlow(FLOW_LOGIN)
+                        shouldShowOnboarding = false
 
                         coroutineScope.launch {
+                            val uid = FirebaseAuth.getInstance().currentUser?.uid.orEmpty()
+                            if (uid.isNotBlank()) runCatching { ensureFeedVisibilityDefault(uid) }
                             navigateAfterAuth(userRepo)
                         }
                     },
                     onSignUpSuccess = { user ->
                         sessionViewModel.setUser(user)
+
+                        // ✅ signup => SI onboarding (siempre)
                         setFlow(FLOW_SIGNUP)
-                        navController.navigate(Screen.SelectGym.route) { launchSingleTop = true }
+                        shouldShowOnboarding = true
+
+                        coroutineScope.launch {
+                            val uid = FirebaseAuth.getInstance().currentUser?.uid.orEmpty()
+                            if (uid.isNotBlank()) runCatching { ensureFeedVisibilityDefault(uid) }
+                            navController.navigate(Screen.SelectGym.route) { launchSingleTop = true }
+                        }
                     }
                 )
             }
@@ -240,14 +277,15 @@ fun AppNavigation(sessionViewModel: SessionViewModel) {
                 SelectGymScreen(
                     onGymSelected = { gym: Gym ->
                         coroutineScope.launch {
-                            runCatching<Unit> { userRepo.saveSelectedGym(gym) }
+                            runCatching { userRepo.saveSelectedGym(gym) }
                                 .onFailure { e -> Log.e("SelectGym", "Error guardando gym", e) }
 
-                            runCatching<Unit> { sessionViewModel.selectGym(gym) }
+                            runCatching { sessionViewModel.selectGym(gym) }
 
-                            val flow = getFlow()
+                            // ✅ CLAVE: onboarding SOLO si shouldShowOnboarding == true (signup)
                             val destination =
-                                if (flow == FLOW_SIGNUP) Screen.Onboarding.route else Screen.Home.route
+                                if (shouldShowOnboarding) Screen.Onboarding.route
+                                else Screen.Home.route
 
                             navController.navigate(destination) {
                                 popUpTo(Screen.Welcome.route) { inclusive = true }
@@ -262,6 +300,9 @@ fun AppNavigation(sessionViewModel: SessionViewModel) {
             composable(Screen.Onboarding.route) {
                 OnboardingScreen(
                     onFinished = {
+                        // ✅ ya lo completó: no volver a mostrar
+                        shouldShowOnboarding = false
+
                         navController.navigate(Screen.Home.route) {
                             popUpTo(Screen.Welcome.route) { inclusive = true }
                             launchSingleTop = true
@@ -274,14 +315,8 @@ fun AppNavigation(sessionViewModel: SessionViewModel) {
             composable(Screen.Home.route) {
                 HomeScreen(
                     sessionViewModel = sessionViewModel,
-
-                    // ✅ FIX: NOMBRES CORRECTOS (según tu HomeScreen)
-                    // "Cargar entreno" -> CreateRoutineScreen
                     onLogWorkout = { navigateToCreateRoutine() },
-
-                    // "Ver ranking" -> Tab Ranking
                     onOpenRanking = { navigateToRankingTab() },
-
                     onLogout = { doLogout() }
                 )
             }
@@ -400,33 +435,25 @@ fun AppNavigation(sessionViewModel: SessionViewModel) {
             composable("workout/progress") { WorkoutProgressScreen(onBack = { navController.popBackStack() }) }
 
             composable("workout/recovery") {
-                RecoveryDetailsScreen(
-                    onBack = { navController.popBackStack() }
-                )
+                RecoveryDetailsScreen(onBack = { navController.popBackStack() })
             }
 
             // ✅ CREATE ROUTINE
             composable(route = "workout/create_routine") {
-
                 val workoutRepo = remember { WorkoutRepositoryFirestoreImpl() }
                 val scope = rememberCoroutineScope()
 
                 CreateRoutineScreen(
                     onBack = { navController.popBackStack() },
                     onCreate = { draft, muscles, weekday ->
-
                         val workout = Workout(
                             durationMinutes = 60,
                             type = draft.name,
                             muscles = muscles,
                             intensity = "Media",
                             notes = draft.description.trim().ifBlank { null },
-
-                            // ✅ lo uso como “nombre” del entrenamiento guardado
                             title = draft.name.trim(),
                             description = draft.description.trim().ifBlank { null },
-
-                            // ✅ weekday adentro de cada exercise
                             exercises = draft.exercises.map { ex ->
                                 WorkoutExercise(
                                     name = ex.name,
@@ -457,7 +484,6 @@ fun AppNavigation(sessionViewModel: SessionViewModel) {
                     onBack = { navController.popBackStack() }
                 )
             }
-
         }
     }
 }

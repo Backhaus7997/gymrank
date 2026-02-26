@@ -12,29 +12,21 @@ class UserRepositoryImpl(
     private val db: FirebaseFirestore = FirebaseFirestore.getInstance()
 ) {
 
+    companion object {
+        // PUBLIC | FRIENDS | PRIVATE
+        const val DEFAULT_FEED_VISIBILITY = "PUBLIC"
+    }
+
     private fun requireUid(): String =
         auth.currentUser?.uid ?: error("No hay usuario logueado (uid null)")
 
-    /**
-     * Guarda el gym seleccionado en el doc del usuario:
-     * users/{uid}
-     *
-     * Campos (según tu código actual):
-     * - gymId
-     * - gymNameCache
-     * - gymSelectedAt
-     * - updatedAt
-     *
-     * ✅ Usamos set(merge) para que no falle si el doc aún no existe.
-     */
     suspend fun saveSelectedGym(gym: Gym) {
         val uid = requireUid()
 
         val updates: Map<String, Any?> = mapOf(
             "gymId" to gym.id,
             "gymNameCache" to gym.name,
-            // si en algún momento querés guardar city, lo dejamos opcional:
-            "gymCityCache" to gym.city, // si no lo querés, podés borrar esta línea
+            "gymCityCache" to gym.city,
             "gymSelectedAt" to FieldValue.serverTimestamp(),
             "updatedAt" to FieldValue.serverTimestamp()
         )
@@ -45,11 +37,6 @@ class UserRepositoryImpl(
             .await()
     }
 
-    /**
-     * Lee el gym guardado desde users/{uid}
-     *
-     * Devuelve null si no hay gym guardado.
-     */
     suspend fun getSelectedGym(): Gym? {
         val uid = auth.currentUser?.uid ?: return null
 
@@ -73,6 +60,10 @@ class UserRepositoryImpl(
         )
     }
 
+    /**
+     * ✅ Guardamos onboarding + seteamos default de privacidad de feed si es primera vez.
+     * (Como es onboarding, normalmente se llama una sola vez).
+     */
     suspend fun saveOnboarding(
         username: String,
         dob: String,
@@ -91,13 +82,42 @@ class UserRepositoryImpl(
             "gender" to gender,
             "experience" to experience,
             "profileCompleted" to true,
+            "feedVisibility" to DEFAULT_FEED_VISIBILITY,
             "updatedAt" to FieldValue.serverTimestamp()
         )
 
-        // ✅ también merge para no explotar si el doc no existe
         db.collection("users")
             .document(uid)
             .set(updates, SetOptions.merge())
+            .await()
+    }
+
+    /**
+     * ✅ Lee privacidad del perfil (PUBLIC | FRIENDS | PRIVATE)
+     */
+    suspend fun getMyFeedVisibility(): String {
+        val uid = auth.currentUser?.uid ?: return DEFAULT_FEED_VISIBILITY
+        val doc = db.collection("users").document(uid).get().await()
+        return doc.getString("feedVisibility")?.trim()?.uppercase() ?: DEFAULT_FEED_VISIBILITY
+    }
+
+    /**
+     * ✅ Actualiza privacidad del perfil (PUBLIC | FRIENDS | PRIVATE)
+     */
+    suspend fun updateMyFeedVisibility(value: String) {
+        val uid = requireUid()
+        val v = value.trim().uppercase()
+        if (v !in listOf("PUBLIC", "FRIENDS", "PRIVATE")) return
+
+        db.collection("users")
+            .document(uid)
+            .set(
+                mapOf(
+                    "feedVisibility" to v,
+                    "updatedAt" to FieldValue.serverTimestamp()
+                ),
+                SetOptions.merge()
+            )
             .await()
     }
 }

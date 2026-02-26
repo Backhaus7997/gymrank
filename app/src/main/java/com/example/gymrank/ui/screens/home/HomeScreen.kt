@@ -52,10 +52,40 @@ import kotlinx.coroutines.tasks.await
 import kotlinx.coroutines.delay
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
+import kotlinx.coroutines.launch
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.material.icons.filled.Logout
+import androidx.compose.material.icons.filled.*
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.DpOffset
+
+
 
 // ============================================
 // Screen
 // ============================================
+
+private enum class FeedVisibility { PUBLIC, FRIENDS, PRIVATE }
+
+private fun FeedVisibility.toFirestore(): String = name
+
+private fun String?.toFeedVisibility(): FeedVisibility = when (this?.trim()?.uppercase()) {
+    "FRIENDS" -> FeedVisibility.FRIENDS
+    "PRIVATE" -> FeedVisibility.PRIVATE
+    else -> FeedVisibility.PUBLIC
+}
+
+private fun FeedVisibility.labelEs(): String = when (this) {
+    FeedVisibility.PUBLIC -> "Público"
+    FeedVisibility.FRIENDS -> "Solo amigos"
+    FeedVisibility.PRIVATE -> "Privado"
+}
+
+private fun FeedVisibility.subtitleEs(): String = when (this) {
+    FeedVisibility.PUBLIC -> "Cualquiera puede ver tus entrenamientos en el feed público."
+    FeedVisibility.FRIENDS -> "Solo tus amigos pueden ver tus entrenamientos."
+    FeedVisibility.PRIVATE -> "Nadie más puede ver tus entrenamientos."
+}
 
 @Composable
 fun HomeScreen(
@@ -67,6 +97,21 @@ fun HomeScreen(
 ) {
     val selectedGym by sessionViewModel.selectedGym.collectAsState()
     val uiState by viewModel.uiState.collectAsState()
+
+    val uid = remember { FirebaseAuth.getInstance().currentUser?.uid.orEmpty() }
+    val db = remember { FirebaseFirestore.getInstance() }
+
+    // ============================
+    // ✅ Feed visibility (perfil)
+    // ============================
+    val userRepo = remember { com.example.gymrank.data.repository.UserRepositoryImpl() }
+    val scope = rememberCoroutineScope()
+
+    var feedVisibility by remember { mutableStateOf(FeedVisibility.PUBLIC) }
+    var isFeedVisibilityLoading by remember { mutableStateOf(false) }
+    var showPrivacySheet by remember { mutableStateOf(false) }
+
+    val privacySheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
     LaunchedEffect(selectedGym) {
         selectedGym?.let { viewModel.setGymData(it) }
@@ -105,8 +150,6 @@ fun HomeScreen(
     // ✅ Routine Plan - Firestore (stored per day)
     // ============================================
 
-    val uid = remember { FirebaseAuth.getInstance().currentUser?.uid.orEmpty() }
-    val db = remember { FirebaseFirestore.getInstance() }
 
     var profileName by remember { mutableStateOf("") }
 
@@ -118,6 +161,9 @@ fun HomeScreen(
             profileName = snap.getString("name")
                 ?: snap.getString("username")
                         ?: ""
+
+            // ✅ leer visibilidad del perfil
+            feedVisibility = snap.getString("feedVisibility").toFeedVisibility()
         }
     }
 
@@ -372,6 +418,86 @@ fun HomeScreen(
         )
     }
 
+    // ============================
+    // ✅ BottomSheet: Privacidad del perfil
+    // ============================
+    if (showPrivacySheet) {
+        ModalBottomSheet(
+            onDismissRequest = { showPrivacySheet = false },
+            sheetState = privacySheetState,
+            containerColor = DesignTokens.Colors.SurfaceElevated
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Text("Privacidad del perfil", fontWeight = FontWeight.Bold)
+
+                Text(
+                    "Esto define quién puede ver tus entrenamientos en el feed.",
+                    color = DesignTokens.Colors.TextSecondary,
+                    style = MaterialTheme.typography.bodySmall
+                )
+
+                Spacer(Modifier.height(6.dp))
+
+                fun pick(v: FeedVisibility) {
+                    if (uid.isBlank()) return
+                    isFeedVisibilityLoading = true
+
+                    scope.launch {
+                        runCatching {
+                            userRepo.updateMyFeedVisibility(v.toFirestore())
+                        }.onSuccess {
+                            feedVisibility = v
+                            showPrivacySheet = false
+                        }.onFailure {
+                            // Si querés, podés mostrar esto en UI. Por ahora lo dejamos simple.
+                        }
+                        isFeedVisibilityLoading = false
+                    }
+                }
+
+                PrivacyOptionRow(
+                    selected = feedVisibility == FeedVisibility.PUBLIC,
+                    title = "Público",
+                    subtitle = FeedVisibility.PUBLIC.subtitleEs(),
+                    onClick = { pick(FeedVisibility.PUBLIC) }
+                )
+
+                PrivacyOptionRow(
+                    selected = feedVisibility == FeedVisibility.FRIENDS,
+                    title = "Solo amigos",
+                    subtitle = FeedVisibility.FRIENDS.subtitleEs(),
+                    onClick = { pick(FeedVisibility.FRIENDS) }
+                )
+
+                PrivacyOptionRow(
+                    selected = feedVisibility == FeedVisibility.PRIVATE,
+                    title = "Privado",
+                    subtitle = FeedVisibility.PRIVATE.subtitleEs(),
+                    onClick = { pick(FeedVisibility.PRIVATE) }
+                )
+
+                if (isFeedVisibilityLoading) {
+                    Spacer(Modifier.height(8.dp))
+                    LinearProgressIndicator(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(6.dp)
+                            .clip(RoundedCornerShape(999.dp)),
+                        color = GymRankColors.PrimaryAccent,
+                        trackColor = DesignTokens.Colors.SurfaceInputs
+                    )
+                }
+
+                Spacer(Modifier.height(10.dp))
+            }
+        }
+    }
+
     // ============================================
     // MAIN LIST
     // ============================================
@@ -385,7 +511,9 @@ fun HomeScreen(
             HomeTopBar(
                 userName = if (profileName.isNotBlank()) profileName else uiState.userName,
                 onOpenRanking = onOpenRanking,
-                onLogout = onLogout
+                onLogout = onLogout,
+                feedVisibilityLabel = feedVisibility.labelEs(),
+                onOpenPrivacy = { showPrivacySheet = true }
             )
         }
 
@@ -445,6 +573,43 @@ fun HomeScreen(
     }
 }
 
+@Composable
+private fun PrivacyOptionRow(
+    selected: Boolean,
+    title: String,
+    subtitle: String,
+    onClick: () -> Unit
+) {
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(14.dp),
+        color = Color(0xFF141A16),
+        border = BorderStroke(
+            1.dp,
+            if (selected) GymRankColors.PrimaryAccent.copy(alpha = 0.6f)
+            else GymRankColors.PrimaryAccent.copy(alpha = 0.15f)
+        ),
+        onClick = onClick
+    ) {
+        Row(
+            modifier = Modifier.padding(12.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(Modifier.weight(1f)) {
+                Text(title, fontWeight = FontWeight.SemiBold)
+                Text(
+                    subtitle,
+                    color = DesignTokens.Colors.TextSecondary,
+                    style = MaterialTheme.typography.bodySmall
+                )
+            }
+            if (selected) {
+                Text("✓", color = GymRankColors.PrimaryAccent, fontWeight = FontWeight.Bold)
+            }
+        }
+    }
+}
+
 // ============================================
 // TOP BAR
 // ============================================
@@ -454,9 +619,12 @@ fun HomeScreen(
 fun HomeTopBar(
     userName: String,
     onOpenRanking: () -> Unit,
-    onLogout: () -> Unit
+    onLogout: () -> Unit,
+    feedVisibilityLabel: String,
+    onOpenPrivacy: () -> Unit
 ) {
     var showLogoutDialog by remember { mutableStateOf(false) }
+    var menuExpanded by remember { mutableStateOf(false) }
 
     if (showLogoutDialog) {
         AlertDialog(
@@ -469,7 +637,7 @@ fun HomeTopBar(
                         showLogoutDialog = false
                         onLogout()
                     }
-                ) { Text("Sí, salir") }
+                ) { Text("Sí, cerrar sesión") }
             },
             dismissButton = {
                 TextButton(onClick = { showLogoutDialog = false }) { Text("Cancelar") }
@@ -479,18 +647,30 @@ fun HomeTopBar(
 
     TopAppBar(
         title = {
-            Column {
-                Text(
-                    text = "Hola 👋",
-                    fontSize = 28.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = DesignTokens.Colors.TextPrimary
-                )
-                Text(
-                    text = if (userName.isNotBlank()) userName else " ",
-                    fontSize = 12.sp,
-                    color = DesignTokens.Colors.TextSecondary
-                )
+            // ✅ Esto evita que se corten los textos de la izquierda
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(
+                    modifier = Modifier.weight(1f) // ✅ el título se queda con el ancho posible
+                ) {
+                    Text(
+                        text = "Hola 👋",
+                        fontSize = 28.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = DesignTokens.Colors.TextPrimary,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    Text(
+                        text = if (userName.isNotBlank()) userName else " ",
+                        fontSize = 12.sp,
+                        color = DesignTokens.Colors.TextSecondary,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
             }
         },
         actions = {
@@ -502,25 +682,79 @@ fun HomeTopBar(
                 )
             }
 
-            Spacer(modifier = Modifier.width(6.dp))
+            Spacer(Modifier.width(8.dp))
 
-            Box(
-                modifier = Modifier
-                    .size(40.dp)
-                    .clip(CircleShape)
-                    .background(DesignTokens.Colors.SurfaceElevated)
-                    .border(1.dp, DesignTokens.Colors.SurfaceInputs, CircleShape)
-                    .clickable { showLogoutDialog = true },
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(
-                    imageVector = Icons.Default.Person,
-                    contentDescription = "Perfil / Cerrar sesión",
-                    tint = GymRankColors.PrimaryAccent
-                )
+            Box {
+                Box(
+                    modifier = Modifier
+                        .size(40.dp)
+                        .clip(CircleShape)
+                        .background(DesignTokens.Colors.SurfaceElevated)
+                        .border(1.dp, DesignTokens.Colors.SurfaceInputs, CircleShape)
+                        .clickable { menuExpanded = true },
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Person,
+                        contentDescription = "Usuario",
+                        tint = GymRankColors.PrimaryAccent
+                    )
+                }
+
+                DropdownMenu(
+                    expanded = menuExpanded,
+                    onDismissRequest = { menuExpanded = false },
+                    offset = DpOffset(x = (-8).dp, y = 10.dp),
+                    modifier = Modifier
+                        .widthIn(min = 190.dp)
+                        .clip(RoundedCornerShape(16.dp))
+                        .background(DesignTokens.Colors.SurfaceElevated)
+                        .border(1.dp, DesignTokens.Colors.SurfaceInputs, RoundedCornerShape(16.dp))
+                        .padding(vertical = 4.dp)
+                ) {
+                    DropdownMenuItem(
+                        text = { Text("Perfil") },
+                        leadingIcon = {
+                            Icon(
+                                imageVector = Icons.Default.Tune,
+                                contentDescription = null,
+                                tint = GymRankColors.PrimaryAccent
+                            )
+                        },
+                        onClick = {
+                            menuExpanded = false
+                            onOpenPrivacy()
+                        },
+                        colors = MenuDefaults.itemColors(
+                            textColor = DesignTokens.Colors.TextPrimary,
+                            leadingIconColor = GymRankColors.PrimaryAccent
+                        )
+                    )
+
+                    HorizontalDivider(color = DesignTokens.Colors.SurfaceInputs)
+
+                    DropdownMenuItem(
+                        text = { Text("Cerrar sesión") },
+                        leadingIcon = {
+                            Icon(
+                                imageVector = Icons.Default.Logout,
+                                contentDescription = null,
+                                tint = GymRankColors.PrimaryAccent
+                            )
+                        },
+                        onClick = {
+                            menuExpanded = false
+                            showLogoutDialog = true
+                        },
+                        colors = MenuDefaults.itemColors(
+                            textColor = DesignTokens.Colors.TextPrimary,
+                            leadingIconColor = GymRankColors.PrimaryAccent
+                        )
+                    )
+                }
             }
 
-            Spacer(modifier = Modifier.width(10.dp))
+            Spacer(Modifier.width(10.dp))
         },
         colors = TopAppBarDefaults.topAppBarColors(
             containerColor = DesignTokens.Colors.BackgroundBase

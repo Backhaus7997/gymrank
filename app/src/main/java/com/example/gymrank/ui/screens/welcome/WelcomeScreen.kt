@@ -20,9 +20,9 @@ import androidx.compose.ui.unit.sp
 import com.example.gymrank.ui.components.GradientBackground
 import com.example.gymrank.ui.components.PrimaryButton
 import com.example.gymrank.ui.components.SecondaryButton
+import com.example.gymrank.ui.screens.signup.SignUpBottomSheet
 import com.example.gymrank.ui.theme.DesignTokens
 import com.example.gymrank.ui.theme.GymRankColors
-import com.example.gymrank.ui.screens.signup.SignUpBottomSheet
 import kotlinx.coroutines.launch
 
 @Composable
@@ -31,7 +31,6 @@ fun WelcomeScreen(
     onNavigateToLogin: () -> Unit,
     onSignUpSuccessNavigate: () -> Unit
 ) {
-    // Estado local para abrir/cerrar el sheet de registro en la misma pantalla
     var showSignUpSheet by remember { mutableStateOf(false) }
 
     val snackbarHostState = remember { SnackbarHostState() }
@@ -47,7 +46,6 @@ fun WelcomeScreen(
                     .fillMaxSize()
                     .padding(paddingValues)
             ) {
-                // Top country chip (optional)
                 Surface(
                     modifier = Modifier
                         .align(Alignment.TopCenter)
@@ -67,7 +65,6 @@ fun WelcomeScreen(
                     )
                 }
 
-                // Center content
                 Column(
                     modifier = Modifier
                         .fillMaxSize()
@@ -77,7 +74,6 @@ fun WelcomeScreen(
                 ) {
                     Spacer(modifier = Modifier.weight(0.3f))
 
-                    // Logo/Brand circle
                     Box(
                         modifier = Modifier
                             .size(160.dp)
@@ -108,7 +104,6 @@ fun WelcomeScreen(
 
                     Spacer(modifier = Modifier.height(DesignTokens.Spacing.xl))
 
-                    // Title with accent on "RANK"
                     Text(
                         text = buildAnnotatedString {
                             withStyle(
@@ -116,17 +111,14 @@ fun WelcomeScreen(
                                     color = GymRankColors.TextPrimary,
                                     fontWeight = FontWeight.Bold
                                 )
-                            ) {
-                                append("FIT ")
-                            }
+                            ) { append("FIT ") }
+
                             withStyle(
                                 style = SpanStyle(
                                     color = GymRankColors.PrimaryAccent,
                                     fontWeight = FontWeight.ExtraBold
                                 )
-                            ) {
-                                append("RANK")
-                            }
+                            ) { append("RANK") }
                         },
                         style = MaterialTheme.typography.displayMedium,
                         fontSize = 48.sp,
@@ -136,7 +128,6 @@ fun WelcomeScreen(
 
                     Spacer(modifier = Modifier.height(DesignTokens.Spacing.md))
 
-                    // Subtitle in Argentinian Spanish
                     Text(
                         text = "Dominá el ranking. Subí de nivel.\nLa comunidad fitness más competitiva de Argentina.",
                         style = MaterialTheme.typography.bodyLarge,
@@ -150,7 +141,6 @@ fun WelcomeScreen(
                     Spacer(modifier = Modifier.weight(0.5f))
                 }
 
-                // Bottom buttons
                 Column(
                     modifier = Modifier
                         .align(Alignment.BottomCenter)
@@ -160,7 +150,11 @@ fun WelcomeScreen(
                 ) {
                     PrimaryButton(
                         text = "EMPEZAR",
-                        onClick = { showSignUpSheet = true }
+                        onClick = {
+                            // ✅ CLAVE: avisar a navegación que esto es SIGNUP flow
+                            onStartSignUp()
+                            showSignUpSheet = true
+                        }
                     )
 
                     Spacer(modifier = Modifier.height(DesignTokens.Spacing.md))
@@ -172,7 +166,6 @@ fun WelcomeScreen(
 
                     Spacer(modifier = Modifier.height(DesignTokens.Spacing.lg))
 
-                    // Footer text
                     Text(
                         text = "v1.0 · HECHO PARA LOS QUE COMPITEN",
                         style = MaterialTheme.typography.labelSmall,
@@ -187,7 +180,6 @@ fun WelcomeScreen(
         }
     }
 
-    // Render del BottomSheet de registro (mismo que la pantalla SignUp)
     if (showSignUpSheet) {
         SignUpBottomSheet(
             onDismiss = { showSignUpSheet = false },

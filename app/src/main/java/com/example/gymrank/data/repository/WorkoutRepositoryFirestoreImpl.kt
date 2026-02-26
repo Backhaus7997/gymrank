@@ -10,14 +10,18 @@ import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.ListenerRegistration
 import com.google.firebase.firestore.Query
 import com.google.firebase.firestore.SetOptions
+import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.tasks.await
-import kotlinx.coroutines.channels.awaitClose
 
 /**
  * Firestore structure:
  * users/{uid}/workouts/{workoutId}
+ *
+ * ✅ Importante:
+ * - NO guardamos "visibility" en cada workout.
+ * - La privacidad vive en users/{uid}.feedVisibility
  */
 class WorkoutRepositoryFirestoreImpl(
     private val auth: FirebaseAuth = FirebaseAuth.getInstance(),
@@ -45,26 +49,21 @@ class WorkoutRepositoryFirestoreImpl(
                     "reps" to ex.reps,
                     "usesBodyweight" to ex.usesBodyweight,
                     "weightKg" to ex.weightKg,
-                    "weekday" to ex.weekday // ✅
+                    "weekday" to ex.weekday
                 )
             }
 
-        // ✅ default de visibilidad (para no guardar vacío y para compat con UI)
-        val visibility = workout.visibility.ifBlank { "PUBLIC" } // PUBLIC | FRIENDS | PRIVATE
-
+        // ✅ NO visibility acá
         val payload = hashMapOf<String, Any?>(
             "id" to docRef.id,
 
-            // timestamps legacy (lo mantenemos por compat)
+            // timestamps legacy (compat)
             "timestampMillis" to (workout.timestampMillis ?: nowMillis),
 
             // rutina
             "title" to workout.title,
             "description" to workout.description,
             "gymId" to workout.gymId,
-
-            // ✅ NUEVO para Feed
-            "visibility" to visibility,
 
             // ejercicios
             "exercises" to exercisesPayload,
@@ -92,7 +91,7 @@ class WorkoutRepositoryFirestoreImpl(
         }
     }
 
-    // ----------------- MAPPER (reutilizado) -----------------
+    // ----------------- MAPPER -----------------
 
     private fun docToWorkout(d: com.google.firebase.firestore.DocumentSnapshot): Workout? {
         return runCatching {
@@ -130,9 +129,7 @@ class WorkoutRepositoryFirestoreImpl(
 
                 exercises = exercises,
 
-                // ✅ NUEVO para Feed (si no existe -> PUBLIC)
-                visibility = d.getString("visibility") ?: "PUBLIC",
-
+                // ✅ NO visibility en domain
                 timestampMillis = tsMillis,
                 durationMinutes = (d.getLong("durationMinutes") ?: 0L).toInt(),
                 type = d.getString("type"),

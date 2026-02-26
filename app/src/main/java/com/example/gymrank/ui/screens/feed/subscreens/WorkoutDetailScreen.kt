@@ -7,6 +7,9 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.FitnessCenter
+import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.People
+import androidx.compose.material.icons.filled.Public
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -24,9 +27,23 @@ import com.example.gymrank.ui.theme.DesignTokens
 import com.example.gymrank.ui.theme.GymRankColors
 import com.google.firebase.firestore.FirebaseFirestore
 import kotlinx.coroutines.tasks.await
+import androidx.compose.foundation.lazy.LazyColumn
+
 
 private const val DEFAULT_WORKOUT_COVER =
     "https://images.unsplash.com/photo-1517836357463-d25dfeac3438?auto=format&fit=crop&w=1200&q=60"
+
+private fun profileVisibilityLabel(v: String): String = when (v.trim().uppercase()) {
+    "FRIENDS" -> "Solo amigos"
+    "PRIVATE" -> "Privado"
+    else -> "Público"
+}
+
+private fun profileVisibilityIcon(v: String) = when (v.trim().uppercase()) {
+    "FRIENDS" -> Icons.Default.People
+    "PRIVATE" -> Icons.Default.Lock
+    else -> Icons.Default.Public
+}
 
 data class WorkoutDetailUi(
     val title: String = "",
@@ -37,7 +54,10 @@ data class WorkoutDetailUi(
     val muscles: List<String> = emptyList(),
     val notes: String? = null,
     val type: String? = null,
-    val exercises: List<ExerciseSummary> = emptyList()
+    val exercises: List<ExerciseSummary> = emptyList(),
+
+    // ✅ ahora esto viene del PERFIL del owner
+    val ownerFeedVisibility: String = "PUBLIC"
 )
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -58,6 +78,8 @@ fun WorkoutDetailScreen(
 
         runCatching {
             val db = FirebaseFirestore.getInstance()
+
+            // 1) workout
             val snap = db.collection("users")
                 .document(ownerUid)
                 .collection("workouts")
@@ -69,7 +91,6 @@ fun WorkoutDetailScreen(
 
             val title = snap.getString("title").orEmpty()
             val imageUrl = snap.getString("imageUrl") ?: DEFAULT_WORKOUT_COVER
-
             val description = snap.getString("description")
             val durationMinutes = snap.getLong("durationMinutes")?.toInt()
             val intensity = snap.getString("intensity")
@@ -89,6 +110,10 @@ fun WorkoutDetailScreen(
                 )
             } ?: emptyList()
 
+            // 2) perfil owner => feedVisibility
+            val ownerSnap = db.collection("users").document(ownerUid).get().await()
+            val ownerVis = ownerSnap.getString("feedVisibility") ?: "PUBLIC"
+
             data = WorkoutDetailUi(
                 title = title,
                 imageUrl = imageUrl,
@@ -98,7 +123,8 @@ fun WorkoutDetailScreen(
                 muscles = muscles,
                 notes = notes,
                 type = type,
-                exercises = exercises
+                exercises = exercises,
+                ownerFeedVisibility = ownerVis
             )
         }.onFailure {
             error = it.message ?: "Error cargando entrenamiento"
@@ -135,68 +161,75 @@ fun WorkoutDetailScreen(
                 data != null -> {
                     val w = data!!
 
-                    Column(
+                    LazyColumn(
                         modifier = Modifier
                             .fillMaxSize()
                             .padding(horizontal = 16.dp),
+                        contentPadding = PaddingValues(top = 8.dp, bottom = 24.dp),
                         verticalArrangement = Arrangement.spacedBy(14.dp)
                     ) {
-                        Spacer(Modifier.height(8.dp))
+                        item { HeroHeader(w) }
 
-                        HeroHeader(w)
-
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(10.dp)
-                        ) {
-                            w.durationMinutes?.let { InfoChip(text = "$it min") }
-                            w.intensity?.takeIf { it.isNotBlank() }?.let { InfoChip(text = it) }
-                            w.type?.takeIf { it.isNotBlank() }?.let { InfoChip(text = it) }
+                        item {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(10.dp)
+                            ) {
+                                w.durationMinutes?.let { InfoChip(text = "$it min") }
+                                w.intensity?.takeIf { it.isNotBlank() }?.let { InfoChip(text = it) }
+                                w.type?.takeIf { it.isNotBlank() }?.let { InfoChip(text = it) }
+                            }
                         }
 
                         if (w.muscles.isNotEmpty() || !w.description.isNullOrBlank()) {
-                            SectionCard(title = "Detalles") {
-                                if (w.muscles.isNotEmpty()) {
-                                    Text(
-                                        "Músculos: ${w.muscles.joinToString(", ")}",
-                                        color = DesignTokens.Colors.TextSecondary
-                                    )
-                                    Spacer(Modifier.height(8.dp))
-                                }
-                                if (!w.description.isNullOrBlank()) {
-                                    Text(
-                                        w.description!!,
-                                        color = DesignTokens.Colors.TextSecondary
-                                    )
+                            item {
+                                SectionCard(title = "Detalles") {
+                                    if (w.muscles.isNotEmpty()) {
+                                        Text(
+                                            "Músculos: ${w.muscles.joinToString(", ")}",
+                                            color = DesignTokens.Colors.TextSecondary
+                                        )
+                                        Spacer(Modifier.height(8.dp))
+                                    }
+                                    if (!w.description.isNullOrBlank()) {
+                                        Text(
+                                            w.description!!,
+                                            color = DesignTokens.Colors.TextSecondary
+                                        )
+                                    }
                                 }
                             }
                         }
 
-                        SectionCard(
-                            title = "Ejercicios",
-                            subtitle = if (w.exercises.isNotEmpty()) "${w.exercises.size} en total" else null
-                        ) {
-                            if (w.exercises.isEmpty()) {
-                                Text(
-                                    "No hay ejercicios cargados.",
-                                    color = DesignTokens.Colors.TextSecondary
-                                )
-                            } else {
-                                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                                    w.exercises.forEach { ex ->
-                                        ExerciseItem(ex) // ✅ acá se ve mejor reps/peso
+                        item {
+                            SectionCard(
+                                title = "Ejercicios",
+                                subtitle = if (w.exercises.isNotEmpty()) "${w.exercises.size} en total" else null
+                            ) {
+                                if (w.exercises.isEmpty()) {
+                                    Text(
+                                        "No hay ejercicios cargados.",
+                                        color = DesignTokens.Colors.TextSecondary
+                                    )
+                                } else {
+                                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                                        w.exercises.forEach { ex ->
+                                            ExerciseItem(ex)
+                                        }
                                     }
                                 }
                             }
                         }
 
                         if (!w.notes.isNullOrBlank()) {
-                            SectionCard(title = "Notas") {
-                                Text(w.notes!!, color = DesignTokens.Colors.TextSecondary)
+                            item {
+                                SectionCard(title = "Notas") {
+                                    Text(w.notes!!, color = DesignTokens.Colors.TextSecondary)
+                                }
                             }
                         }
 
-                        Spacer(Modifier.height(18.dp))
+                        item { Spacer(Modifier.height(18.dp)) }
                     }
                 }
             }
@@ -305,9 +338,6 @@ private fun SectionCard(
     }
 }
 
-/**
- * ✅ MEJORA: a la derecha muestra “Reps” y “Peso” en dos líneas, bien alineado.
- */
 @Composable
 private fun ExerciseItem(ex: ExerciseSummary) {
     val repsText = "${ex.reps}"
@@ -325,7 +355,6 @@ private fun ExerciseItem(ex: ExerciseSummary) {
             .padding(horizontal = 12.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        // Izquierda: ícono + nombre
         Row(
             modifier = Modifier.weight(1f),
             verticalAlignment = Alignment.CenterVertically
@@ -345,7 +374,6 @@ private fun ExerciseItem(ex: ExerciseSummary) {
 
         Spacer(Modifier.width(12.dp))
 
-        // Derecha: tabla mini “Reps / Peso”
         Column(
             horizontalAlignment = Alignment.End,
             verticalArrangement = Arrangement.spacedBy(2.dp)

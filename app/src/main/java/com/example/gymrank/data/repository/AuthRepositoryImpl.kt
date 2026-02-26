@@ -35,7 +35,6 @@ class AuthRepositoryImpl(
                 User(
                     id = fu.uid,
                     email = fu.email ?: email.trim(),
-                    name = fu.displayName ?: ""
                 )
             )
         } catch (e: Exception) {
@@ -51,7 +50,6 @@ class AuthRepositoryImpl(
             val user = User(
                 id = fu.uid,
                 email = fu.email ?: email.trim(),
-                name = fu.displayName ?: ""
             )
 
             // ✅ Guardar en Firestore (timestamps como "fecha")
@@ -59,9 +57,9 @@ class AuthRepositoryImpl(
                 "id" to user.id,
                 "uid" to user.id, // opcional, pero útil
                 "email" to user.email,
-                "name" to user.name,
                 "createdAt" to FieldValue.serverTimestamp(),
-                "updatedAt" to FieldValue.serverTimestamp()
+                "updatedAt" to FieldValue.serverTimestamp(),
+                "feedVisibility" to "PUBLIC"
             )
 
             db.collection("users")
@@ -85,7 +83,6 @@ class AuthRepositoryImpl(
             val user = User(
                 id = fu.uid,
                 email = fu.email ?: "",
-                name = fu.displayName ?: ""
             )
 
             val userRef = db.collection("users").document(user.id)
@@ -97,8 +94,8 @@ class AuthRepositoryImpl(
                 "id" to user.id,
                 "uid" to user.id,
                 "email" to user.email,
-                "name" to user.name,
-                "updatedAt" to FieldValue.serverTimestamp()
+                "updatedAt" to FieldValue.serverTimestamp(),
+                "feedVisibility" to "PUBLIC"
             )
 
             if (!snap.exists()) {
