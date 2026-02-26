@@ -4,8 +4,12 @@ import com.example.gymrank.ui.screens.feed.ExerciseSummary
 import com.example.gymrank.ui.screens.feed.FeedPost
 import com.google.firebase.Timestamp
 import com.google.firebase.auth.FirebaseAuth
+import com.google.firebase.firestore.FieldValue
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.Query
+import kotlinx.coroutines.channels.awaitClose
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.tasks.await
 import java.util.concurrent.TimeUnit
 
@@ -13,21 +17,23 @@ class FeedRepositoryFirestoreImpl(
     private val db: FirebaseFirestore = FirebaseFirestore.getInstance(),
     private val auth: FirebaseAuth = FirebaseAuth.getInstance()
 ) {
+
+    // =========================
+    // MODELOS
+    // =========================
+
     data class UserDoc(
         val username: String = "",
         val experience: String = "Principiante",
         val avatarUrl: String? = null,
-        val feedVisibility: String = "PUBLIC" // ✅ NUEVO (en perfil)
+        val feedVisibility: String = "PUBLIC"
     )
 
-    // ✅ workouts YA NO tienen visibility
     data class WorkoutDoc(
         val title: String = "",
         val imageUrl: String? = null,
         val createdAt: Any? = null,
         val exercises: List<Map<String, Any?>> = emptyList(),
-
-        // extra detalle
         val description: String? = null,
         val durationMinutes: Long? = null,
         val intensity: String? = null,
@@ -36,6 +42,27 @@ class FeedRepositoryFirestoreImpl(
         val type: String? = null,
         val timestampMillis: Long? = null
     )
+
+    // ✅ NUEVO: Friend Request UI model
+    data class FriendRequestDoc(
+        val fromUid: String = "",
+        val toUid: String = "",
+        val status: String = "pending", // pending | accepted | rejected | canceled
+        val createdAt: Any? = null,
+        val updatedAt: Any? = null
+    )
+
+    data class FriendRequestItem(
+        val requestId: String,
+        val fromUid: String,
+        val fromUsername: String,
+        val fromAvatarUrl: String,
+        val createdAtLabel: String
+    )
+
+    // =========================
+    // HELPERS
+    // =========================
 
     private fun now() = System.currentTimeMillis()
 
@@ -62,23 +89,25 @@ class FeedRepositoryFirestoreImpl(
         }
     }
 
+    private fun normalizeFeedVisibility(v: String?): String = v?.trim()?.uppercase() ?: "PUBLIC"
+
+    private fun requestId(fromUid: String, toUid: String) = "${fromUid}_${toUid}"
+
+    // =========================
+    // AMIGOS (igual que hoy)
+    // =========================
+
     suspend fun removeFriend(friendUid: String) {
         val myUid = auth.currentUser?.uid ?: return
         if (friendUid == myUid) return
 
+        // borro ambos lados si querés; por ahora mantenemos como lo tenías (solo mi lado)
         db.collection("users")
             .document(myUid)
             .collection("friends")
             .document(friendUid)
             .delete()
             .await()
-    }
-
-    private fun levelFromExperience(exp: String): Int = when (exp.trim().lowercase()) {
-        "principiante" -> 12
-        "intermedio" -> 25
-        "avanzado" -> 40
-        else -> 10
     }
 
     suspend fun getMyFriendsUids(): List<String> {
@@ -90,6 +119,228 @@ class FeedRepositoryFirestoreImpl(
             .await()
         return snap.documents.map { it.id }
     }
+
+    // ✅ compat: esto antes agregaba directo, ahora ENVIAR SOLICITUD
+    suspend fun addFriend(friendUid: String) {
+        sendFriendRequest(friendUid)
+    }
+
+    // =========================
+    // ✅ NUEVO: SOLICITUDES
+    // =========================
+
+    /**
+     * Enviar solicitud:
+     * - si ya son amigos -> no hace nada
+     * - si existe request pendente (en cualquier dirección) -> no duplica
+     * - requestId = from_to
+     */
+    suspend fun sendFriendRequest(toUid: String) {
+        val fromUid = auth.currentUser?.uid ?: return
+        if (toUid.isBlank() || fromUid == toUid) return
+
+        // 1) Si ya son amigos
+        val alreadyFriend = db.collection("users")
+            .document(fromUid)
+            .collection("friends")
+            .document(toUid)
+            .get()
+            .await()
+            .exists()
+        if (alreadyFriend) return
+
+        // 2) Si ya hay pending entrante (to->from), no creo otra: el usuario debería aceptar esa.
+        val incomingId = requestId(toUid, fromUid)
+        val incomingSnap = db.collection("friend_requests").document(incomingId).get().await()
+        val incomingStatus = incomingSnap.getString("status")?.lowercase()
+        if (incomingSnap.exists() && incomingStatus == "pending") return
+
+        // 3) Creo/actualizo mi outgoing
+        val outId = requestId(fromUid, toUid)
+        val ref = db.collection("friend_requests").document(outId)
+
+        val existing = ref.get().await()
+        val existingStatus = existing.getString("status")?.lowercase()
+
+        // si ya está pending, listo
+        if (existing.exists() && existingStatus == "pending") return
+
+        val payload = hashMapOf(
+            "fromUid" to fromUid,
+            "toUid" to toUid,
+            "status" to "pending",
+            "updatedAt" to FieldValue.serverTimestamp()
+        )
+
+        // si es nuevo, setear createdAt
+        if (!existing.exists()) {
+            payload["createdAt"] = FieldValue.serverTimestamp()
+        }
+
+        ref.set(payload).await()
+    }
+
+    suspend fun cancelFriendRequest(toUid: String) {
+        val fromUid = auth.currentUser?.uid ?: return
+        if (toUid.isBlank() || fromUid == toUid) return
+
+        val id = requestId(fromUid, toUid)
+        val ref = db.collection("friend_requests").document(id)
+        val snap = ref.get().await()
+        if (!snap.exists()) return
+
+        val status = snap.getString("status")?.lowercase()
+        if (status != "pending") return
+
+        ref.set(
+            mapOf(
+                "status" to "canceled",
+                "updatedAt" to FieldValue.serverTimestamp()
+            ),
+            com.google.firebase.firestore.SetOptions.merge()
+        ).await()
+    }
+
+    /**
+     * Aceptar solicitud entrante (fromUid -> me):
+     * - marca request accepted
+     * - crea friends en ambos users
+     */
+    suspend fun acceptFriendRequest(fromUid: String) {
+        val myUid = auth.currentUser?.uid ?: return
+        if (fromUid.isBlank() || fromUid == myUid) return
+
+        val id = requestId(fromUid, myUid)
+        val reqRef = db.collection("friend_requests").document(id)
+
+        db.runTransaction { tx ->
+            val snap = tx.get(reqRef)
+            if (!snap.exists()) return@runTransaction null
+
+            val status = snap.getString("status")?.lowercase()
+            if (status != "pending") return@runTransaction null
+
+            // 1) set accepted
+            tx.set(
+                reqRef,
+                mapOf(
+                    "status" to "accepted",
+                    "updatedAt" to FieldValue.serverTimestamp()
+                ),
+                com.google.firebase.firestore.SetOptions.merge()
+            )
+
+            // 2) friends ambos lados
+            val myFriendRef = db.collection("users").document(myUid)
+                .collection("friends").document(fromUid)
+
+            val otherFriendRef = db.collection("users").document(fromUid)
+                .collection("friends").document(myUid)
+
+            tx.set(myFriendRef, mapOf("createdAt" to FieldValue.serverTimestamp()))
+            tx.set(otherFriendRef, mapOf("createdAt" to FieldValue.serverTimestamp()))
+
+            null
+        }.await()
+    }
+
+    suspend fun rejectFriendRequest(fromUid: String) {
+        val myUid = auth.currentUser?.uid ?: return
+        if (fromUid.isBlank() || fromUid == myUid) return
+
+        val id = requestId(fromUid, myUid)
+        val ref = db.collection("friend_requests").document(id)
+        val snap = ref.get().await()
+        if (!snap.exists()) return
+
+        val status = snap.getString("status")?.lowercase()
+        if (status != "pending") return
+
+        ref.set(
+            mapOf(
+                "status" to "rejected",
+                "updatedAt" to FieldValue.serverTimestamp()
+            ),
+            com.google.firebase.firestore.SetOptions.merge()
+        ).await()
+    }
+
+    // ✅ NUEVO: badge count en Home (pendientes entrantes)
+    fun observeIncomingPendingRequestsCount(): Flow<Int> = callbackFlow {
+        val uid = auth.currentUser?.uid.orEmpty()
+        if (uid.isBlank()) {
+            trySend(0)
+            close()
+            return@callbackFlow
+        }
+
+        val reg = db.collection("friend_requests")
+            .whereEqualTo("toUid", uid)
+            .whereEqualTo("status", "pending")
+            .addSnapshotListener { snap, _ ->
+                trySend(snap?.size() ?: 0)
+            }
+
+        awaitClose { reg.remove() }
+    }
+
+    // ✅ NUEVO: lista de solicitudes entrantes
+    fun observeIncomingPendingRequests(): Flow<List<FriendRequestItem>> = callbackFlow {
+        val uid = auth.currentUser?.uid.orEmpty()
+        if (uid.isBlank()) {
+            trySend(emptyList())
+            close()
+            return@callbackFlow
+        }
+
+        val reg = db.collection("friend_requests")
+            .whereEqualTo("toUid", uid)
+            .whereEqualTo("status", "pending")
+            .addSnapshotListener { snap, _ ->
+                // devolvemos ids, luego el screen resuelve user data
+                val docs = snap?.documents.orEmpty()
+
+                // Emitimos con info mínima; el Screen completa username/avatar.
+                val basic = docs.map { d ->
+                    val r = d.toObject(FriendRequestDoc::class.java) ?: FriendRequestDoc()
+                    FriendRequestItem(
+                        requestId = d.id,
+                        fromUid = r.fromUid,
+                        fromUsername = "",
+                        fromAvatarUrl = "",
+                        createdAtLabel = timeLabel(createdAtMillis(r.createdAt))
+                    )
+                }.sortedByDescending { it.createdAtLabel } // no es perfecto, pero sirve
+
+                trySend(basic)
+            }
+
+        awaitClose { reg.remove() }
+    }
+
+    // ✅ NUEVO: helper para armar UI completa (username/avatar) a partir de fromUid
+    suspend fun getUserMini(uid: String): Pair<String, String> {
+        val snap = FirebaseFirestore.getInstance()
+            .collection("users")
+            .document(uid)
+            .get()
+            .await()
+
+        val username = snap.getString("username")
+            ?: snap.getString("name")
+            ?: snap.getString("displayName")
+            ?: "usuario"
+
+        val avatarUrl = snap.getString("avatarUrl")
+            ?: snap.getString("photoUrl")
+            ?: ""
+
+        return username to avatarUrl
+    }
+
+    // =========================
+    // BÚSQUEDA DE USUARIOS
+    // =========================
 
     suspend fun searchUsersByUsernameExact(username: String): List<Pair<String, UserDoc>> {
         val q = username.trim()
@@ -107,24 +358,15 @@ class FeedRepositoryFirestoreImpl(
         }
     }
 
-    suspend fun addFriend(friendUid: String) {
-        val myUid = auth.currentUser?.uid ?: return
-        if (friendUid == myUid) return
-
-        db.collection("users")
-            .document(myUid)
-            .collection("friends")
-            .document(friendUid)
-            .set(mapOf("createdAt" to com.google.firebase.firestore.FieldValue.serverTimestamp()))
-            .await()
+    private fun levelFromExperience(exp: String): Int = when (exp.trim().lowercase()) {
+        "principiante" -> 12
+        "intermedio" -> 25
+        "avanzado" -> 40
+        else -> 10
     }
 
-    private fun normalizeFeedVisibility(v: String?): String = v?.trim()?.uppercase() ?: "PUBLIC"
-
     /**
-     * ✅ FEED PÚBLICO:
-     * - Solo usuarios cuyo perfil esté en PUBLIC.
-     * - No hay filtro por workout.visibility porque ya no existe.
+     * FEED PÚBLICO (igual que lo tenías)
      */
     suspend fun getPublicFeed(maxUsers: Int = 50, perUserLimit: Long = 5): List<FeedPost> {
         val myUid = auth.currentUser?.uid ?: ""
@@ -139,7 +381,7 @@ class FeedRepositoryFirestoreImpl(
             .mapNotNull { doc ->
                 val u = doc.toObject(UserDoc::class.java) ?: return@mapNotNull null
                 val vis = normalizeFeedVisibility(u.feedVisibility)
-                if (vis != "PUBLIC") return@mapNotNull null // ✅ clave
+                if (vis != "PUBLIC") return@mapNotNull null
                 doc.id to u.copy(feedVisibility = vis)
             }
 
@@ -175,7 +417,7 @@ class FeedRepositoryFirestoreImpl(
                     workoutTitle = w.title,
                     workoutImageUrl = w.imageUrl
                         ?: "https://images.unsplash.com/photo-1517836357463-d25dfeac3438?auto=format&fit=crop&w=1200&q=60",
-                    visibility = "Público", // ✅ viene del perfil
+                    visibility = "Público",
                     timestampLabel = timeLabel(ms),
                     exercises = exercises
                 )
@@ -188,9 +430,7 @@ class FeedRepositoryFirestoreImpl(
     }
 
     /**
-     * ✅ FEED AMIGOS:
-     * - Si el amigo está en PRIVATE -> no se muestra nada
-     * - Si está en FRIENDS o PUBLIC -> se muestra
+     * FEED AMIGOS (igual que lo tenías)
      */
     suspend fun getFriendsFeed(friendUids: List<String>, perFriendLimit: Long = 10): List<FeedPost> {
         if (friendUids.isEmpty()) return emptyList()
@@ -202,7 +442,7 @@ class FeedRepositoryFirestoreImpl(
             val user = userSnap.toObject(UserDoc::class.java) ?: continue
 
             val vis = normalizeFeedVisibility(user.feedVisibility)
-            if (vis == "PRIVATE") continue // ✅ clave
+            if (vis == "PRIVATE") continue
 
             val ws = db.collection("users").document(friendUid)
                 .collection("workouts")
@@ -230,8 +470,7 @@ class FeedRepositoryFirestoreImpl(
                     id = wDoc.id,
                     ownerUid = friendUid,
                     userName = user.username.ifBlank { "usuario" },
-                    avatarUrl = user.avatarUrl?.takeIf { it.isNotBlank() }
-                        ?: "https://i.pravatar.cc/128?u=$friendUid",
+                    avatarUrl = user.avatarUrl?.takeIf { it.isNotBlank() } ?: "https://i.pravatar.cc/128?u=$friendUid",
                     level = levelFromExperience(user.experience),
                     workoutTitle = w.title,
                     workoutImageUrl = w.imageUrl

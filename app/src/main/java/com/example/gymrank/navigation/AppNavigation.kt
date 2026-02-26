@@ -28,6 +28,7 @@ import com.example.gymrank.ui.screens.challenges.subscreens.GambleScreen
 import com.example.gymrank.ui.screens.challenges.subscreens.QuestsScreen
 import com.example.gymrank.ui.screens.feed.FeedScreen
 import com.example.gymrank.ui.screens.feed.subscreens.WorkoutDetailScreen
+import com.example.gymrank.ui.screens.friendrequests.FriendRequestsScreen // ✅ NUEVO
 import com.example.gymrank.ui.screens.home.HomeScreen
 import com.example.gymrank.ui.screens.loadworkout.LoadWorkoutScreen
 import com.example.gymrank.ui.screens.login.LoginScreen
@@ -317,7 +318,8 @@ fun AppNavigation(sessionViewModel: SessionViewModel) {
                     sessionViewModel = sessionViewModel,
                     onLogWorkout = { navigateToCreateRoutine() },
                     onOpenRanking = { navigateToRankingTab() },
-                    onLogout = { doLogout() }
+                    onLogout = { doLogout() },
+                    onOpenFriendRequests = { navController.navigate("friends/requests") }
                 )
             }
 
@@ -390,6 +392,11 @@ fun AppNavigation(sessionViewModel: SessionViewModel) {
                     onCancel = { navController.popBackStack() },
                     onSaved = { navController.popBackStack() }
                 )
+            }
+
+            // ✅ NUEVO: FRIEND REQUESTS
+            composable("friends/requests") {
+                FriendRequestsScreen(onBack = { navController.popBackStack() })
             }
 
             // ✅ SUBSCREENS CHALLENGES

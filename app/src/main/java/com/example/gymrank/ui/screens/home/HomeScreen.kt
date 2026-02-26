@@ -1,11 +1,11 @@
 @file:OptIn(
-    ExperimentalMaterial3Api::class,
-    ExperimentalLayoutApi::class
+    androidx.compose.material3.ExperimentalMaterial3Api::class,
+    androidx.compose.foundation.layout.ExperimentalLayoutApi::class
 )
 
 package com.example.gymrank.ui.screens.home
 
-import androidx.compose.foundation.Image
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -18,23 +18,27 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.FitnessCenter
 import androidx.compose.material.icons.filled.FlashOn
+import androidx.compose.material.icons.filled.Logout
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Timeline
+import androidx.compose.material.icons.filled.Tune
+import androidx.compose.material.icons.filled.GroupAdd
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
-import com.example.gymrank.R
+import com.example.gymrank.data.repository.UserRepositoryImpl
 import com.example.gymrank.data.repository.WorkoutRepositoryFirestoreImpl
 import com.example.gymrank.domain.model.Workout
 import com.example.gymrank.ui.components.BodyWithMuscleMasks
@@ -45,21 +49,12 @@ import com.example.gymrank.ui.theme.DesignTokens
 import com.example.gymrank.ui.theme.GymRankColors
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.firestore.FirebaseFirestore
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.tasks.await
 import java.util.Calendar
 import java.util.Locale
 import kotlin.math.max
-import kotlinx.coroutines.tasks.await
-import kotlinx.coroutines.delay
-import androidx.compose.foundation.layout.ExperimentalLayoutApi
-import androidx.compose.foundation.layout.FlowRow
-import kotlinx.coroutines.launch
-import androidx.compose.foundation.BorderStroke
-import androidx.compose.material.icons.filled.Logout
-import androidx.compose.material.icons.filled.*
-import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.unit.DpOffset
-
-
 
 // ============================================
 // Screen
@@ -93,7 +88,8 @@ fun HomeScreen(
     viewModel: HomeViewModel = viewModel(),
     onLogWorkout: () -> Unit = {},
     onOpenRanking: () -> Unit = {},
-    onLogout: () -> Unit = {}
+    onLogout: () -> Unit = {},
+    onOpenFriendRequests: () -> Unit = {}, // ✅ NUEVO
 ) {
     val selectedGym by sessionViewModel.selectedGym.collectAsState()
     val uiState by viewModel.uiState.collectAsState()
@@ -104,20 +100,19 @@ fun HomeScreen(
     // ============================
     // ✅ Feed visibility (perfil)
     // ============================
-    val userRepo = remember { com.example.gymrank.data.repository.UserRepositoryImpl() }
+    val userRepo = remember { UserRepositoryImpl() }
     val scope = rememberCoroutineScope()
 
     var feedVisibility by remember { mutableStateOf(FeedVisibility.PUBLIC) }
     var isFeedVisibilityLoading by remember { mutableStateOf(false) }
     var showPrivacySheet by remember { mutableStateOf(false) }
-
     val privacySheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
     LaunchedEffect(selectedGym) {
         selectedGym?.let { viewModel.setGymData(it) }
     }
 
-    // ✅ SETS POR MUSCULO (semana) -> entrenamientos reales
+    // ✅ Workouts (para sets por músculo de la semana)
     val workoutRepo = remember { WorkoutRepositoryFirestoreImpl() }
     val allWorkouts by remember { workoutRepo.getWorkouts() }.collectAsState(initial = emptyList())
     val weekRange = remember { currentWeekRangeMillis() }
@@ -136,7 +131,6 @@ fun HomeScreen(
     // ============================================
     // ✅ Calendar selection (default = today)
     // ============================================
-
     val dayLabelsShort = remember { listOf("L", "M", "M", "J", "V", "S", "D") }
     val dayLabelsLong = remember {
         listOf("Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo")
@@ -149,8 +143,6 @@ fun HomeScreen(
     // ============================================
     // ✅ Routine Plan - Firestore (stored per day)
     // ============================================
-
-
     var profileName by remember { mutableStateOf("") }
 
     LaunchedEffect(uid) {
@@ -162,46 +154,30 @@ fun HomeScreen(
                 ?: snap.getString("username")
                         ?: ""
 
-            // ✅ leer visibilidad del perfil
             feedVisibility = snap.getString("feedVisibility").toFeedVisibility()
         }
     }
 
-    // Cache local del plan semanal: dayKey -> muscles
     var weekPlan by remember { mutableStateOf<Map<String, List<String>>>(emptyMap()) }
     var isPlanLoading by remember { mutableStateOf(false) }
     var planError by remember { mutableStateOf<String?>(null) }
     var saveStatus by remember { mutableStateOf<String?>(null) }
 
-    // ✅ Auto-ocultar mensaje de éxito luego de un tiempo
     LaunchedEffect(saveStatus) {
         if (saveStatus != null && saveStatus!!.contains("✅")) {
             delay(2500)
-            if (saveStatus != null && saveStatus!!.contains("✅")) {
-                saveStatus = null
-            }
+            if (saveStatus != null && saveStatus!!.contains("✅")) saveStatus = null
         }
     }
 
-    // UI modals
     var showPlanDaysModal by remember { mutableStateOf(false) }
     var showMusclePickerModal by remember { mutableStateOf(false) }
     var editingDayIndex by remember { mutableIntStateOf(0) }
 
     val allMuscleOptions = remember {
         listOf(
-            "Pecho",
-            "Espalda",
-            "Femorales",
-            "Hombros",
-            "Bíceps",
-            "Tríceps",
-            "Abdomen",
-            "Glúteos",
-            "Cuadriceps",
-            "Pantorrillas",
-            "Trapecios",
-            "Antebrazos"
+            "Pecho", "Espalda", "Femorales", "Hombros", "Bíceps", "Tríceps",
+            "Abdomen", "Glúteos", "Cuadriceps", "Pantorrillas", "Trapecios", "Antebrazos"
         )
     }
 
@@ -272,39 +248,24 @@ fun HomeScreen(
             }
     }
 
-    // Cargar plan al entrar / cuando cambia el usuario
-    LaunchedEffect(uid) {
-        loadWeekPlan()
-    }
+    LaunchedEffect(uid) { loadWeekPlan() }
 
     val selectedDayKey = dayKeys.getOrNull(selectedDayIndex) ?: "mon"
     val selectedDayMuscles = weekPlan[selectedDayKey].orEmpty()
 
-    // ✅ label dinámico del botón del plan (si hay algo cargado en cualquier día -> Editar)
     val hasAnyPlan = remember(weekPlan) { weekPlan.values.any { it.isNotEmpty() } }
     val planButtonLabel = if (hasAnyPlan) "Editar plan" else "Cargar plan"
-
-    // ============================================
-    // ✅ BODY COUNTS: ahora vienen del plan del día seleccionado
-    // ============================================
 
     val (resolvedFront, resolvedBack) = remember(selectedDayMuscles) {
         buildMuscleCountsFromRoutinePlan(selectedDayMuscles)
     }
 
-    // ============================================
-    // ✅ Calendar progress: workouts reales de la semana
-    // ============================================
-
-    val completedThisWeek = remember(todayIndex) {
-        (todayIndex + 1).coerceIn(0, 7)
-    }
+    // ✅ ejemplo simple (lo tenías así). Si querés que sea real por workouts, lo cambiamos después.
+    val completedThisWeek = remember(todayIndex) { (todayIndex + 1).coerceIn(0, 7) }
 
     // ============================================
     // UI MODALS
     // ============================================
-
-    // Modal 1: Lista de días
     if (showPlanDaysModal) {
         AlertDialog(
             onDismissRequest = { showPlanDaysModal = false },
@@ -345,14 +306,11 @@ fun HomeScreen(
                 }
             },
             confirmButton = {
-                TextButton(onClick = { showPlanDaysModal = false }) {
-                    Text("Cerrar")
-                }
+                TextButton(onClick = { showPlanDaysModal = false }) { Text("Cerrar") }
             }
         )
     }
 
-    // Modal 2: Selector de músculos para un día
     if (showMusclePickerModal) {
         val editKey = dayKeys.getOrNull(editingDayIndex) ?: "mon"
         val editDayLabel = dayLabelsLong.getOrNull(editingDayIndex) ?: "Día"
@@ -411,9 +369,7 @@ fun HomeScreen(
                 ) { Text("Guardar") }
             },
             dismissButton = {
-                TextButton(onClick = { showMusclePickerModal = false }) {
-                    Text("Cancelar")
-                }
+                TextButton(onClick = { showMusclePickerModal = false }) { Text("Cancelar") }
             }
         )
     }
@@ -448,14 +404,11 @@ fun HomeScreen(
                     isFeedVisibilityLoading = true
 
                     scope.launch {
-                        runCatching {
-                            userRepo.updateMyFeedVisibility(v.toFirestore())
-                        }.onSuccess {
-                            feedVisibility = v
-                            showPrivacySheet = false
-                        }.onFailure {
-                            // Si querés, podés mostrar esto en UI. Por ahora lo dejamos simple.
-                        }
+                        runCatching { userRepo.updateMyFeedVisibility(v.toFirestore()) }
+                            .onSuccess {
+                                feedVisibility = v
+                                showPrivacySheet = false
+                            }
                         isFeedVisibilityLoading = false
                     }
                 }
@@ -501,7 +454,6 @@ fun HomeScreen(
     // ============================================
     // MAIN LIST
     // ============================================
-
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
         contentPadding = PaddingValues(bottom = 24.dp),
@@ -513,7 +465,8 @@ fun HomeScreen(
                 onOpenRanking = onOpenRanking,
                 onLogout = onLogout,
                 feedVisibilityLabel = feedVisibility.labelEs(),
-                onOpenPrivacy = { showPrivacySheet = true }
+                onOpenPrivacy = { showPrivacySheet = true },
+                onOpenFriendRequests = onOpenFriendRequests // ✅ NUEVO
             )
         }
 
@@ -534,7 +487,6 @@ fun HomeScreen(
             )
         }
 
-        // ✅ Calendar
         item {
             WorkoutCalendarCard(
                 modifier = Modifier.padding(horizontal = 14.dp),
@@ -547,7 +499,6 @@ fun HomeScreen(
             )
         }
 
-        // ✅ Mi rutina (en feed)
         item {
             RoutineSummaryCard(
                 modifier = Modifier.padding(horizontal = 16.dp),
@@ -614,14 +565,14 @@ private fun PrivacyOptionRow(
 // TOP BAR
 // ============================================
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun HomeTopBar(
+private fun HomeTopBar(
     userName: String,
     onOpenRanking: () -> Unit,
     onLogout: () -> Unit,
     feedVisibilityLabel: String,
-    onOpenPrivacy: () -> Unit
+    onOpenPrivacy: () -> Unit,
+    onOpenFriendRequests: () -> Unit // ✅ NUEVO
 ) {
     var showLogoutDialog by remember { mutableStateOf(false) }
     var menuExpanded by remember { mutableStateOf(false) }
@@ -647,14 +598,11 @@ fun HomeTopBar(
 
     TopAppBar(
         title = {
-            // ✅ Esto evita que se corten los textos de la izquierda
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Column(
-                    modifier = Modifier.weight(1f) // ✅ el título se queda con el ancho posible
-                ) {
+                Column(modifier = Modifier.weight(1f)) {
                     Text(
                         text = "Hola 👋",
                         fontSize = 28.sp,
@@ -713,7 +661,7 @@ fun HomeTopBar(
                         .padding(vertical = 4.dp)
                 ) {
                     DropdownMenuItem(
-                        text = { Text("Perfil") },
+                        text = { Text("Perfil ($feedVisibilityLabel)") },
                         leadingIcon = {
                             Icon(
                                 imageVector = Icons.Default.Tune,
@@ -724,6 +672,26 @@ fun HomeTopBar(
                         onClick = {
                             menuExpanded = false
                             onOpenPrivacy()
+                        },
+                        colors = MenuDefaults.itemColors(
+                            textColor = DesignTokens.Colors.TextPrimary,
+                            leadingIconColor = GymRankColors.PrimaryAccent
+                        )
+                    )
+
+                    // ✅ NUEVO: Friend Requests
+                    DropdownMenuItem(
+                        text = { Text("Solicitudes de amistad") },
+                        leadingIcon = {
+                            Icon(
+                                imageVector = Icons.Default.GroupAdd,
+                                contentDescription = null,
+                                tint = GymRankColors.PrimaryAccent
+                            )
+                        },
+                        onClick = {
+                            menuExpanded = false
+                            onOpenFriendRequests()
                         },
                         colors = MenuDefaults.itemColors(
                             textColor = DesignTokens.Colors.TextPrimary,
@@ -828,26 +796,14 @@ private fun QuickActionCard(
                     ),
                 contentAlignment = Alignment.Center
             ) {
-                Icon(
-                    imageVector = icon,
-                    contentDescription = null,
-                    tint = GymRankColors.PrimaryAccent
-                )
+                Icon(imageVector = icon, contentDescription = null, tint = GymRankColors.PrimaryAccent)
             }
 
             Spacer(Modifier.width(12.dp))
 
             Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = title,
-                    fontWeight = FontWeight.Bold,
-                    color = DesignTokens.Colors.TextPrimary
-                )
-                Text(
-                    text = subtitle,
-                    fontSize = 12.sp,
-                    color = DesignTokens.Colors.TextSecondary
-                )
+                Text(text = title, fontWeight = FontWeight.Bold, color = DesignTokens.Colors.TextPrimary)
+                Text(text = subtitle, fontSize = 12.sp, color = DesignTokens.Colors.TextSecondary)
             }
         }
     }
@@ -859,8 +815,8 @@ private fun QuickActionCard(
 
 @Composable
 private fun MusclesTrainedThisWeekCardPro(
-    frontCounts: Map<MuscleId, Int>,
-    backCounts: Map<MuscleId, Int>,
+    frontCounts: Map<com.example.gymrank.ui.components.MuscleId, Int>,
+    backCounts: Map<com.example.gymrank.ui.components.MuscleId, Int>,
     modifier: Modifier = Modifier,
     onSettingsClick: () -> Unit
 ) {
@@ -904,17 +860,9 @@ private fun MusclesTrainedThisWeekCardPro(
             horizontalArrangement = Arrangement.SpaceEvenly,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            BodyCanvas(
-                title = "Frente",
-                counts = frontCounts,
-                modifier = Modifier.weight(1f)
-            )
+            BodyCanvas(title = "Frente", counts = frontCounts, modifier = Modifier.weight(1f))
             Spacer(Modifier.width(14.dp))
-            BodyCanvas(
-                title = "Espalda",
-                counts = backCounts,
-                modifier = Modifier.weight(1f)
-            )
+            BodyCanvas(title = "Espalda", counts = backCounts, modifier = Modifier.weight(1f))
         }
 
         Spacer(Modifier.height(10.dp))
@@ -930,7 +878,7 @@ private fun MusclesTrainedThisWeekCardPro(
 @Composable
 private fun BodyCanvas(
     title: String,
-    counts: Map<MuscleId, Int>,
+    counts: Map<com.example.gymrank.ui.components.MuscleId, Int>,
     modifier: Modifier = Modifier
 ) {
     Column(
@@ -969,7 +917,7 @@ private fun BodyCanvas(
 }
 
 // ============================================
-// CALENDAR (SELECTABLE + TODAY)
+// CALENDAR
 // ============================================
 
 @Composable
@@ -1029,13 +977,10 @@ private fun WorkoutCalendarCard(
 
         LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             items(dayLabelsShort.size) { idx ->
-                val isToday = idx == todayIndex
-                val isSelected = idx == selectedDayIndex
-
                 DayPillSelectable(
                     day = dayLabelsShort[idx],
-                    isToday = isToday,
-                    isSelected = isSelected,
+                    isToday = idx == todayIndex,
+                    isSelected = idx == selectedDayIndex,
                     onClick = { onSelectDay(idx) }
                 )
             }
@@ -1081,7 +1026,7 @@ private fun DayPillSelectable(
 }
 
 // ============================================
-// ✅ Mi Rutina card (feed) - CHIPS COMO 2DA IMAGEN
+// ✅ Mi Rutina card (chips 2 columnas)
 // ============================================
 
 @Composable
@@ -1166,7 +1111,11 @@ private fun RoutineSummaryCard(
                     modifier = Modifier
                         .clip(RoundedCornerShape(999.dp))
                         .background(GymRankColors.PrimaryAccent.copy(alpha = 0.18f))
-                        .border(1.dp, GymRankColors.PrimaryAccent.copy(alpha = 0.55f), RoundedCornerShape(999.dp))
+                        .border(
+                            1.dp,
+                            GymRankColors.PrimaryAccent.copy(alpha = 0.55f),
+                            RoundedCornerShape(999.dp)
+                        )
                         .padding(horizontal = 10.dp, vertical = 6.dp)
                 ) {
                     Text(
@@ -1198,7 +1147,7 @@ private fun RoutineSummaryCard(
                     .padding(12.dp)
             ) {
                 Text(
-                    text = "No hay músculos cargados para este día. Tocá “${planButtonLabel}” para configurarlo.",
+                    text = "No hay músculos cargados para este día. Tocá “$planButtonLabel” para configurarlo.",
                     color = DesignTokens.Colors.TextSecondary,
                     fontSize = 12.sp,
                     lineHeight = 16.sp
@@ -1210,7 +1159,7 @@ private fun RoutineSummaryCard(
     }
 }
 
-@OptIn(ExperimentalLayoutApi::class)
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
 private fun RoutineChipsTwoColumns(items: List<String>) {
     FlowRow(
@@ -1222,9 +1171,7 @@ private fun RoutineChipsTwoColumns(items: List<String>) {
         items.forEach { label ->
             RoutineChip(
                 label = label,
-                modifier = Modifier
-                    // "mitad" del ancho, con margen para el spacing
-                    .fillMaxWidth(0.48f)
+                modifier = Modifier.fillMaxWidth(0.48f)
             )
         }
     }
@@ -1248,7 +1195,6 @@ private fun RoutineChip(
             .padding(horizontal = 12.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        // ícono como en la 2da imagen
         Box(
             modifier = Modifier
                 .size(22.dp)
@@ -1282,7 +1228,7 @@ private fun RoutineChip(
 }
 
 // ============================================
-// SETS BY MUSCLE - VER MÁS / VER MENOS (EXPAND)
+// SETS BY MUSCLE - VER MÁS / VER MENOS
 // ============================================
 
 @Composable
@@ -1326,7 +1272,6 @@ private fun SetsByMuscleCard(
         val maxVal = (items.maxOfOrNull { it.second } ?: 0).coerceAtLeast(1)
 
         if (!expanded) {
-            // ✅ vista compacta (como tu 1ra imagen: 4 cards)
             val preview = remember(items) { items.take(4) }
 
             LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -1344,7 +1289,6 @@ private fun SetsByMuscleCard(
                 modifier = Modifier.clickable { expanded = true }
             )
         } else {
-            // ✅ vista expandida (como 2da imagen: grilla 3 columnas)
             SetsGrid3Columns(items = items, maxVal = maxVal)
 
             Spacer(Modifier.height(12.dp))
@@ -1378,11 +1322,8 @@ private fun SetsGrid3Columns(
                     }
                 }
 
-                // si la última fila tiene menos de 3, completamos espacio para que quede alineado
                 val missing = 3 - row.size
-                repeat(missing) {
-                    Spacer(modifier = Modifier.weight(1f))
-                }
+                repeat(missing) { Spacer(modifier = Modifier.weight(1f)) }
             }
         }
     }
@@ -1549,50 +1490,58 @@ private fun LegendDot(label: String, color: Color) {
 
 private fun buildMuscleCountsFromRoutinePlan(
     muscles: List<String>
-): Pair<Map<MuscleId, Int>, Map<MuscleId, Int>> {
+): Pair<Map<com.example.gymrank.ui.components.MuscleId, Int>, Map<com.example.gymrank.ui.components.MuscleId, Int>> {
 
-    fun canonToMuscleId(name: String): MuscleId? = when (name.trim().lowercase(Locale.getDefault())) {
-        // FRONT
-        "pecho", "pectorales", "pectoral" -> MuscleId.Chest
-        "abdomen", "abs", "core" -> MuscleId.Abs
-        "oblicuos", "oblicuo", "obliques" -> MuscleId.Obliques
-        "biceps", "bíceps", "bicep" -> MuscleId.Biceps
-        "antebrazos", "antebrazo", "forearms", "forearm" -> MuscleId.Forearms
-        "cuadriceps", "cuádriceps", "quads", "quadriceps", "piernas" -> MuscleId.Quads
-        "pantorrillas", "pantorrilla", "gemelos", "calves", "calf" -> MuscleId.Calves
+    fun canonToMuscleId(name: String): com.example.gymrank.ui.components.MuscleId? = when (name.trim().lowercase(Locale.getDefault())) {
+        "pecho", "pectorales", "pectoral" -> com.example.gymrank.ui.components.MuscleId.Chest
+        "abdomen", "abs", "core" -> com.example.gymrank.ui.components.MuscleId.Abs
+        "oblicuos", "oblicuo", "obliques" -> com.example.gymrank.ui.components.MuscleId.Obliques
+        "biceps", "bíceps", "bicep" -> com.example.gymrank.ui.components.MuscleId.Biceps
+        "antebrazos", "antebrazo", "forearms", "forearm" -> com.example.gymrank.ui.components.MuscleId.Forearms
+        "cuadriceps", "cuádriceps", "quads", "quadriceps", "piernas" -> com.example.gymrank.ui.components.MuscleId.Quads
+        "pantorrillas", "pantorrilla", "gemelos", "calves", "calf" -> com.example.gymrank.ui.components.MuscleId.Calves
 
-        // BOTH
-        "hombros", "deltoides", "deltoide", "shoulders" -> MuscleId.Shoulders
-        "trapecios", "trapecio", "traps", "trap" -> MuscleId.Traps
+        "hombros", "deltoides", "deltoide", "shoulders" -> com.example.gymrank.ui.components.MuscleId.Shoulders
+        "trapecios", "trapecio", "traps", "trap" -> com.example.gymrank.ui.components.MuscleId.Traps
 
-        // BACK
-        "triceps", "tríceps", "tricep" -> MuscleId.Triceps
-        "espalda", "back" -> MuscleId.Back
-        "dorsales", "dorsal", "lats", "dorsal ancho" -> MuscleId.Lats
-        "lumbar", "lumbares", "lower back", "espalda baja" -> MuscleId.LowerBack
-        "gluteos", "glúteos", "glutes", "glute" -> MuscleId.Glutes
-        "isquios", "isquiotibiales", "hamstrings", "femorales" -> MuscleId.Hamstrings
-
+        "triceps", "tríceps", "tricep" -> com.example.gymrank.ui.components.MuscleId.Triceps
+        "espalda", "back" -> com.example.gymrank.ui.components.MuscleId.Back
+        "dorsales", "dorsal", "lats", "dorsal ancho" -> com.example.gymrank.ui.components.MuscleId.Lats
+        "lumbar", "lumbares", "lower back", "espalda baja" -> com.example.gymrank.ui.components.MuscleId.LowerBack
+        "gluteos", "glúteos", "glutes", "glute" -> com.example.gymrank.ui.components.MuscleId.Glutes
+        "isquios", "isquiotibiales", "hamstrings", "femorales" -> com.example.gymrank.ui.components.MuscleId.Hamstrings
         else -> null
     }
 
-    val front = mutableMapOf<MuscleId, Int>()
-    val back = mutableMapOf<MuscleId, Int>()
+    val front = mutableMapOf<com.example.gymrank.ui.components.MuscleId, Int>()
+    val back = mutableMapOf<com.example.gymrank.ui.components.MuscleId, Int>()
 
-    fun incFront(id: MuscleId) { front[id] = (front[id] ?: 0) + 1 }
-    fun incBack(id: MuscleId) { back[id] = (back[id] ?: 0) + 1 }
+    fun incFront(id: com.example.gymrank.ui.components.MuscleId) { front[id] = (front[id] ?: 0) + 1 }
+    fun incBack(id: com.example.gymrank.ui.components.MuscleId) { back[id] = (back[id] ?: 0) + 1 }
 
     muscles.mapNotNull { canonToMuscleId(it) }
         .distinct()
         .forEach { id ->
             when (id) {
-                MuscleId.Shoulders, MuscleId.Traps, MuscleId.Forearms, MuscleId.Calves -> {
+                com.example.gymrank.ui.components.MuscleId.Shoulders,
+                com.example.gymrank.ui.components.MuscleId.Traps,
+                com.example.gymrank.ui.components.MuscleId.Forearms,
+                com.example.gymrank.ui.components.MuscleId.Calves -> {
                     incFront(id); incBack(id)
                 }
 
-                MuscleId.Chest, MuscleId.Abs, MuscleId.Obliques, MuscleId.Biceps, MuscleId.Quads -> incFront(id)
+                com.example.gymrank.ui.components.MuscleId.Chest,
+                com.example.gymrank.ui.components.MuscleId.Abs,
+                com.example.gymrank.ui.components.MuscleId.Obliques,
+                com.example.gymrank.ui.components.MuscleId.Biceps,
+                com.example.gymrank.ui.components.MuscleId.Quads -> incFront(id)
 
-                MuscleId.Triceps, MuscleId.Lats, MuscleId.Back, MuscleId.LowerBack, MuscleId.Glutes, MuscleId.Hamstrings -> incBack(id)
+                com.example.gymrank.ui.components.MuscleId.Triceps,
+                com.example.gymrank.ui.components.MuscleId.Lats,
+                com.example.gymrank.ui.components.MuscleId.Back,
+                com.example.gymrank.ui.components.MuscleId.LowerBack,
+                com.example.gymrank.ui.components.MuscleId.Glutes,
+                com.example.gymrank.ui.components.MuscleId.Hamstrings -> incBack(id)
 
                 else -> incFront(id)
             }
@@ -1622,18 +1571,8 @@ private fun currentWeekRangeMillis(): Pair<Long, Long> {
 
 private fun buildSetsByMuscleItemsThisWeek(workouts: List<Workout>): List<Pair<String, Int>> {
     val ordered = listOf(
-        "Pecho",
-        "Espalda",
-        "Femorales",
-        "Hombros",
-        "Bíceps",
-        "Tríceps",
-        "Abdomen",
-        "Glúteos",
-        "Cuadriceps",
-        "Pantorrillas",
-        "Trapecios",
-        "Antebrazos"
+        "Pecho", "Espalda", "Femorales", "Hombros", "Bíceps", "Tríceps",
+        "Abdomen", "Glúteos", "Cuadriceps", "Pantorrillas", "Trapecios", "Antebrazos"
     )
 
     fun canon(name: String): String? = when (name.trim().lowercase(Locale.getDefault())) {
@@ -1675,8 +1614,7 @@ private fun buildSetsByMuscleItemsThisWeek(workouts: List<Workout>): List<Pair<S
 
 private fun todayIndexMondayFirst(): Int {
     val cal = Calendar.getInstance(Locale.getDefault())
-    val dow = cal.get(Calendar.DAY_OF_WEEK)
-    return when (dow) {
+    return when (cal.get(Calendar.DAY_OF_WEEK)) {
         Calendar.MONDAY -> 0
         Calendar.TUESDAY -> 1
         Calendar.WEDNESDAY -> 2
@@ -1686,46 +1624,6 @@ private fun todayIndexMondayFirst(): Int {
         Calendar.SUNDAY -> 6
         else -> 0
     }
-}
-
-// Opcional
-@Composable
-fun MuscleFront(modifier: Modifier = Modifier) {
-    Image(
-        painter = painterResource(R.drawable.muscle_front),
-        contentDescription = "Músculos (frente)",
-        modifier = modifier
-    )
-}
-
-@Composable
-fun MuscleBack(modifier: Modifier = Modifier) {
-    Image(
-        painter = painterResource(R.drawable.muscle_back),
-        contentDescription = "Músculos (espalda)",
-        modifier = modifier
-    )
-}
-
-private fun countUniqueWorkoutDaysThisWeek(workouts: List<Workout>): Int {
-    if (workouts.isEmpty()) return 0
-
-    val uniqueDays = workouts.mapNotNull { w ->
-        val ts = w.timestampMillis ?: w.createdAt
-        ts?.let { startOfDayMillis(it) }
-    }.toSet()
-
-    return uniqueDays.size
-}
-
-private fun startOfDayMillis(epochMillis: Long): Long {
-    val cal = Calendar.getInstance(Locale.getDefault())
-    cal.timeInMillis = epochMillis
-    cal.set(Calendar.HOUR_OF_DAY, 0)
-    cal.set(Calendar.MINUTE, 0)
-    cal.set(Calendar.SECOND, 0)
-    cal.set(Calendar.MILLISECOND, 0)
-    return cal.timeInMillis
 }
 
 private fun <T> chunkToRows(items: List<T>, maxPerRow: Int): List<List<T>> {
