@@ -705,7 +705,7 @@ private fun SummaryCard(
                             text = "Historial",
                             color = textPrimary,
                             fontWeight = FontWeight.SemiBold,
-                            fontSize = 13.sp
+                            fontSize = 11.sp
                         )
                     }
                 }

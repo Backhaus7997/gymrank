@@ -2,6 +2,7 @@ package com.example.gymrank.ui.screens.feed
 
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -23,8 +24,8 @@ import coil.compose.AsyncImage
 import com.example.gymrank.ui.components.GlassCard
 import com.example.gymrank.ui.theme.DesignTokens
 import com.example.gymrank.ui.theme.GymRankColors
-import androidx.compose.foundation.clickable
-
+import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Close
 
 // ---------------- MODELS ----------------
 
@@ -37,6 +38,7 @@ data class ExerciseSummary(
 
 data class FeedPost(
     val id: String,
+    val ownerUid: String,
     val userName: String,
     val avatarUrl: String,
     val level: Int,
@@ -52,9 +54,14 @@ enum class FeedTab { FRIENDS, PUBLIC }
 // ---------------- SCREEN ----------------
 
 @Composable
-fun FeedScreen() {
+fun FeedScreen(
+    vm: FeedViewModel = androidx.lifecycle.viewmodel.compose.viewModel(),
+    onOpenWorkout: (ownerUid: String, workoutId: String) -> Unit = { _, _ -> } // ✅ NUEVO
+) {
     var selectedTab by remember { mutableStateOf(FeedTab.PUBLIC) }
-    val posts = remember { samplePosts() }
+    val state by vm.state.collectAsState()
+
+    LaunchedEffect(Unit) { vm.load() }
 
     Column(
         modifier = Modifier
@@ -64,20 +71,182 @@ fun FeedScreen() {
         FeedTabs(selectedTab = selectedTab, onTabSelected = { selectedTab = it })
         Spacer(Modifier.height(12.dp))
 
+        if (state.loading) {
+            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                CircularProgressIndicator()
+            }
+            return
+        }
+
+        state.error?.let {
+            Text(it, color = Color(0xFFFF6B6B), modifier = Modifier.padding(bottom = 8.dp))
+        }
+
         LazyColumn(
             modifier = Modifier.fillMaxSize(),
             contentPadding = PaddingValues(bottom = 96.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
-            val filtered = posts.filter {
-                it.visibility == if (selectedTab == FeedTab.PUBLIC) "Público" else "Amigos"
+            if (selectedTab == FeedTab.FRIENDS) {
+                item {
+                    FriendsHeader(
+                        hasFriends = state.friendsUids.isNotEmpty(),
+                        onSearch = { vm.search(it) },
+                        results = state.searchResults,
+                        onAdd = { vm.addFriend(it) }
+                    )
+                }
             }
 
-            if (filtered.isEmpty()) {
-                item { EmptyFeedState() }
+            val posts = if (selectedTab == FeedTab.PUBLIC) state.publicPosts else state.friendsPosts
+
+            if (posts.isEmpty()) {
+                item {
+                    if (selectedTab == FeedTab.FRIENDS && state.friendsUids.isEmpty()) {
+                        EmptyFriendsState()
+                    } else {
+                        EmptyFeedState()
+                    }
+                }
             } else {
-                items(filtered) { post ->
-                    FeedPostCard(post)
+                items(posts) { post ->
+                    FeedPostCard(
+                        post = post,
+                        onOpen = { onOpenWorkout(post.ownerUid, post.id) } // ✅ NUEVO
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun EmptyFriendsState() {
+    Column(
+        modifier = Modifier.fillMaxWidth().padding(top = 24.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Text("👥", fontSize = 44.sp)
+        Spacer(Modifier.height(10.dp))
+        Text("Todavía no agregaste amigos", fontWeight = FontWeight.SemiBold)
+        Spacer(Modifier.height(6.dp))
+        Text(
+            "Agregá amigos para ver sus entrenamientos acá.",
+            color = DesignTokens.Colors.TextSecondary,
+            textAlign = TextAlign.Center
+        )
+    }
+}
+
+@Composable
+private fun FriendsHeader(
+    hasFriends: Boolean,
+    onSearch: (String) -> Unit,
+    results: List<Pair<String, com.example.gymrank.data.repository.FeedRepositoryFirestoreImpl.UserDoc>>,
+    onAdd: (String) -> Unit
+) {
+    var q by remember { mutableStateOf("") }
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(16.dp))
+            .background(DesignTokens.Colors.SurfaceElevated)
+            .padding(14.dp)
+    ) {
+        Text(
+            if (hasFriends) "Amigos" else "Todavía no agregaste amigos",
+            fontWeight = FontWeight.SemiBold
+        )
+
+        Spacer(Modifier.height(10.dp))
+
+        // ✅ Search bar pro
+        Surface(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(14.dp),
+            color = Color(0xFF141A16),
+            border = BorderStroke(1.dp, GymRankColors.PrimaryAccent.copy(alpha = 0.25f))
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 12.dp, vertical = 10.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Search,
+                    contentDescription = null,
+                    tint = DesignTokens.Colors.TextSecondary
+                )
+
+                Spacer(Modifier.width(10.dp))
+
+                TextField(
+                    value = q,
+                    onValueChange = {
+                        q = it
+                        if (it.trim().length >= 2) onSearch(it.trim())
+                    },
+                    modifier = Modifier.weight(1f),
+                    placeholder = {
+                        Text(
+                            "Buscar por username",
+                            color = DesignTokens.Colors.TextSecondary
+                        )
+                    },
+                    singleLine = true,
+                    colors = TextFieldDefaults.colors(
+                        focusedContainerColor = Color.Transparent,
+                        unfocusedContainerColor = Color.Transparent,
+                        disabledContainerColor = Color.Transparent,
+                        focusedIndicatorColor = Color.Transparent,
+                        unfocusedIndicatorColor = Color.Transparent,
+                        cursorColor = GymRankColors.PrimaryAccent,
+                        focusedTextColor = GymRankColors.TextPrimary,
+                        unfocusedTextColor = GymRankColors.TextPrimary
+                    )
+                )
+
+                if (q.isNotBlank()) {
+                    IconButton(
+                        onClick = { q = "" },
+                        modifier = Modifier.size(34.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Close,
+                            contentDescription = "Limpiar",
+                            tint = DesignTokens.Colors.TextSecondary
+                        )
+                    }
+                }
+            }
+        }
+
+        if (results.isNotEmpty()) {
+            Spacer(Modifier.height(10.dp))
+            results.take(5).forEach { (uid, user) ->
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Column {
+                        Text(user.username, fontWeight = FontWeight.Medium)
+                        Text(
+                            user.experience,
+                            color = DesignTokens.Colors.TextSecondary,
+                            fontSize = 12.sp
+                        )
+                    }
+                    Button(
+                        onClick = { onAdd(uid) },
+                        colors = ButtonDefaults.buttonColors(containerColor = GymRankColors.PrimaryAccent)
+                    ) {
+                        Text("Agregar", color = Color.Black, fontWeight = FontWeight.SemiBold)
+                    }
                 }
             }
         }
@@ -125,11 +294,13 @@ private fun TabButton(label: String, selected: Boolean, onClick: () -> Unit) {
 // ---------------- CARD ----------------
 
 @Composable
-private fun FeedPostCard(post: FeedPost) {
+private fun FeedPostCard(
+    post: FeedPost,
+    onOpen: () -> Unit
+) {
     GlassCard(glow = true) {
         Column(Modifier.fillMaxWidth()) {
 
-            // 🔥 Cover image
             AsyncImage(
                 model = post.workoutImageUrl,
                 contentDescription = null,
@@ -142,7 +313,6 @@ private fun FeedPostCard(post: FeedPost) {
 
             Column(Modifier.padding(16.dp)) {
 
-                // Header
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     AsyncImage(
                         model = post.avatarUrl,
@@ -194,7 +364,8 @@ private fun FeedPostCard(post: FeedPost) {
                 Text(
                     "Ver entrenamiento completo →",
                     color = GymRankColors.PrimaryAccent,
-                    fontWeight = FontWeight.Medium
+                    fontWeight = FontWeight.Medium,
+                    modifier = Modifier.clickable { onOpen() } // ✅ CLICK
                 )
 
                 Spacer(Modifier.height(10.dp))
@@ -264,160 +435,3 @@ private fun EmptyFeedState() {
         )
     }
 }
-
-// ---------------- MOCK DATA ----------------
-
-// Mock data (en español)
-private fun samplePosts(): List<FeedPost> = listOf(
-    FeedPost(
-        id = "1",
-        userName = "brandedlifte16",
-        level = 40,
-        workoutTitle = "Pecho y abdominales",
-        visibility = "Amigos",
-        timestampLabel = "Recién",
-        exercises = listOf(
-            ExerciseSummary("Aperturas en máquina para pecho", 12, 40f),
-            ExerciseSummary("Aperturas inclinadas con mancuernas", 10, 16f),
-            ExerciseSummary("Flexiones diamante", 15, null, isBodyWeight = true)
-        ),
-        avatarUrl = "https://i.pravatar.cc/128?img=12",
-        workoutImageUrl = "https://images.unsplash.com/photo-1517836357463-d25dfeac3438?auto=format&fit=crop&w=1200&q=60"
-    ),
-    FeedPost(
-        id = "2",
-        userName = "Sonjinwoo17",
-        level = 21,
-        workoutTitle = "Hombros y brazos",
-        visibility = "Amigos",
-        timestampLabel = "Recién",
-        exercises = listOf(
-            ExerciseSummary("Press militar con barra", 8, 50f),
-            ExerciseSummary("Elevaciones laterales", 12, 10f),
-            ExerciseSummary("Curl en polea", 12, 25f)
-        ),
-        avatarUrl = "https://i.pravatar.cc/128?img=33",
-        workoutImageUrl = "https://images.pexels.com/photos/2247179/pexels-photo-2247179.jpeg"
-    ),
-    FeedPost(
-        id = "3",
-        userName = "Marcos",
-        level = 12,
-        workoutTitle = "Piernas",
-        visibility = "Amigos",
-        timestampLabel = "Ayer",
-        exercises = listOf(
-            ExerciseSummary("Sentadilla", 5, 120f),
-            ExerciseSummary("Prensa", 12, 200f),
-            ExerciseSummary("Curl femoral", 12, 35f)
-        ),
-        avatarUrl = "https://i.pravatar.cc/128?img=7",
-        workoutImageUrl = "https://images.unsplash.com/photo-1517963879433-6ad2b056d712?auto=format&fit=crop&w=1200&q=60"
-    ),
-
-    FeedPost(
-        id = "4",
-        userName = "luisa.fit",
-        level = 18,
-        workoutTitle = "Espalda y bíceps",
-        visibility = "Amigos",
-        timestampLabel = "Hace 10 min",
-        exercises = listOf(
-            ExerciseSummary("Jalón al pecho", 12, 55f),
-            ExerciseSummary("Remo con mancuerna", 10, 32f),
-            ExerciseSummary("Curl martillo", 12, 14f)
-        ),
-        avatarUrl = "https://i.pravatar.cc/128?img=47",
-        workoutImageUrl = "https://images.pexels.com/photos/2261485/pexels-photo-2261485.jpeg"
-    ),
-    FeedPost(
-        id = "5",
-        userName = "lucas.fit",
-        level = 21,
-        workoutTitle = "Push day",
-        visibility = "Amigos",
-        timestampLabel = "Hace 1 h",
-        exercises = listOf(
-            ExerciseSummary("Press inclinado", 10, 70f),
-            ExerciseSummary("Fondos en paralelas", 12, null, isBodyWeight = true),
-            ExerciseSummary("Extensión de tríceps", 12, 35f)
-        ),
-        avatarUrl = "https://i.pravatar.cc/128?img=12",
-        workoutImageUrl = "https://images.pexels.com/photos/4164761/pexels-photo-4164761.jpeg"
-    ),
-    FeedPost(
-        id = "6",
-        userName = "agus.strength",
-        level = 41,
-        workoutTitle = "Piernas pesado",
-        visibility = "Público",
-        timestampLabel = "Hace 3 h",
-        exercises = listOf(
-            ExerciseSummary("Sentadilla trasera", 5, 160f),
-            ExerciseSummary("Prensa", 10, 280f),
-            ExerciseSummary("Curl femoral", 12, 55f)
-        ),
-        avatarUrl = "https://i.pravatar.cc/128?img=47",
-        workoutImageUrl = "https://images.pexels.com/photos/1552242/pexels-photo-1552242.jpeg"
-    ),
-    FeedPost(
-        id = "7",
-        userName = "vale.runner",
-        level = 18,
-        workoutTitle = "Core + cardio",
-        visibility = "Público",
-        timestampLabel = "Hace 6 h",
-        exercises = listOf(
-            ExerciseSummary("Plancha", 45, null, isBodyWeight = true),
-            ExerciseSummary("Crunch abdominal", 20, null, isBodyWeight = true),
-            ExerciseSummary("Mountain climbers", 30, null, isBodyWeight = true)
-        ),
-        avatarUrl = "https://i.pravatar.cc/128?img=32",
-        workoutImageUrl = "https://images.pexels.com/photos/3757376/pexels-photo-3757376.jpeg"
-    ),
-    FeedPost(
-        id = "8",
-        userName = "nico.powerlift",
-        level = 55,
-        workoutTitle = "Upper strength",
-        visibility = "Solo amigos",
-        timestampLabel = "Ayer",
-        exercises = listOf(
-            ExerciseSummary("Press banca", 3, 145f),
-            ExerciseSummary("Remo con barra", 6, 120f),
-            ExerciseSummary("Press militar", 5, 85f)
-        ),
-        avatarUrl = "https://i.pravatar.cc/128?img=8",
-        workoutImageUrl = "https://images.pexels.com/photos/2261485/pexels-photo-2261485.jpeg"
-    ),
-    FeedPost(
-        id = "9",
-        userName = "sofi.cross",
-        level = 27,
-        workoutTitle = "Metcon rápido",
-        visibility = "Público",
-        timestampLabel = "Hace 2 días",
-        exercises = listOf(
-            ExerciseSummary("Thrusters", 15, 40f),
-            ExerciseSummary("Burpees", 20, null, isBodyWeight = true),
-            ExerciseSummary("Wall balls", 25, 9f)
-        ),
-        avatarUrl = "https://i.pravatar.cc/128?img=19",
-        workoutImageUrl = "https://images.pexels.com/photos/841130/pexels-photo-841130.jpeg"
-    ),
-    FeedPost(
-        id = "11",
-        userName = "martin.gym",
-        level = 38,
-        workoutTitle = "Espalda + bíceps",
-        visibility = "Público",
-        timestampLabel = "Hace 4 días",
-        exercises = listOf(
-            ExerciseSummary("Dominadas", 8, null, isBodyWeight = true),
-            ExerciseSummary("Jalón al pecho", 10, 75f),
-            ExerciseSummary("Curl con barra", 10, 45f)
-        ),
-        avatarUrl = "https://i.pravatar.cc/128?img=5",
-        workoutImageUrl = "https://images.pexels.com/photos/1552106/pexels-photo-1552106.jpeg"
-    )
-)

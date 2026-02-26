@@ -9,10 +9,11 @@ import com.google.firebase.firestore.FieldValue
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.ListenerRegistration
 import com.google.firebase.firestore.Query
-import kotlinx.coroutines.channels.awaitClose
+import com.google.firebase.firestore.SetOptions
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.tasks.await
+import kotlinx.coroutines.channels.awaitClose
 
 /**
  * Firestore structure:
@@ -30,8 +31,11 @@ class WorkoutRepositoryFirestoreImpl(
         val uid = auth.currentUser?.uid ?: error("No hay usuario logueado (uid null)")
         val col = workoutsCol(uid)
 
-        val docRef = if (workout.id.isNotBlank()) col.document(workout.id) else col.document()
+        val isNew = workout.id.isBlank()
+        val docRef = if (!isNew) col.document(workout.id) else col.document()
         val nowMillis = System.currentTimeMillis()
+
+        Log.d("WorkoutRepo", "saveWorkout START uid=$uid isNew=$isNew docId=${docRef.id}")
 
         val exercisesPayload: List<Map<String, Any?>> =
             workout.exercises.map { ex ->
@@ -40,22 +44,27 @@ class WorkoutRepositoryFirestoreImpl(
                     "sets" to ex.sets,
                     "reps" to ex.reps,
                     "usesBodyweight" to ex.usesBodyweight,
-                    "weightKg" to ex.weightKg
+                    "weightKg" to ex.weightKg,
+                    "weekday" to ex.weekday // ✅
                 )
             }
+
+        // ✅ default de visibilidad (para no guardar vacío y para compat con UI)
+        val visibility = workout.visibility.ifBlank { "PUBLIC" } // PUBLIC | FRIENDS | PRIVATE
 
         val payload = hashMapOf<String, Any?>(
             "id" to docRef.id,
 
-            // timestamps
+            // timestamps legacy (lo mantenemos por compat)
             "timestampMillis" to (workout.timestampMillis ?: nowMillis),
-            "createdAt" to FieldValue.serverTimestamp(),
-            "updatedAt" to FieldValue.serverTimestamp(),
 
             // rutina
             "title" to workout.title,
             "description" to workout.description,
             "gymId" to workout.gymId,
+
+            // ✅ NUEVO para Feed
+            "visibility" to visibility,
 
             // ejercicios
             "exercises" to exercisesPayload,
@@ -65,15 +74,77 @@ class WorkoutRepositoryFirestoreImpl(
             "type" to workout.type,
             "muscles" to workout.muscles,
             "intensity" to workout.intensity,
-            "notes" to workout.notes
+            "notes" to workout.notes,
+
+            // updated siempre
+            "updatedAt" to FieldValue.serverTimestamp()
         )
 
-        docRef.set(payload).await()
+        // ✅ createdAt SOLO si es nuevo
+        if (isNew) payload["createdAt"] = FieldValue.serverTimestamp()
+
+        try {
+            docRef.set(payload, SetOptions.merge()).await()
+            Log.d("WorkoutRepo", "saveWorkout OK uid=$uid docId=${docRef.id}")
+        } catch (e: Exception) {
+            Log.e("WorkoutRepo", "saveWorkout FAILED uid=$uid docId=${docRef.id}", e)
+            throw e
+        }
+    }
+
+    // ----------------- MAPPER (reutilizado) -----------------
+
+    private fun docToWorkout(d: com.google.firebase.firestore.DocumentSnapshot): Workout? {
+        return runCatching {
+            val createdAtMillis = d.getTimestamp("createdAt")?.toDate()?.time
+            val updatedAtMillis = d.getTimestamp("updatedAt")?.toDate()?.time
+            val tsMillis = d.getLong("timestampMillis") ?: createdAtMillis ?: 0L
+
+            val exercises = (d.get("exercises") as? List<*>)?.mapNotNull { item ->
+                val m = item as? Map<*, *> ?: return@mapNotNull null
+                val name = m["name"] as? String ?: ""
+                val sets = (m["sets"] as? Number)?.toInt() ?: 0
+                val reps = (m["reps"] as? Number)?.toInt() ?: 0
+                val usesBodyweight = m["usesBodyweight"] as? Boolean ?: false
+                val weightKg = (m["weightKg"] as? Number)?.toInt()
+                val weekday = (m["weekday"] as? Number)?.toInt()
+
+                WorkoutExercise(
+                    name = name,
+                    sets = sets,
+                    reps = reps,
+                    usesBodyweight = usesBodyweight,
+                    weightKg = weightKg,
+                    weekday = weekday
+                )
+            } ?: emptyList()
+
+            Workout(
+                id = d.getString("id") ?: d.id,
+                createdAt = createdAtMillis,
+                updatedAt = updatedAtMillis,
+
+                title = d.getString("title") ?: "",
+                description = d.getString("description"),
+                gymId = d.getString("gymId"),
+
+                exercises = exercises,
+
+                // ✅ NUEVO para Feed (si no existe -> PUBLIC)
+                visibility = d.getString("visibility") ?: "PUBLIC",
+
+                timestampMillis = tsMillis,
+                durationMinutes = (d.getLong("durationMinutes") ?: 0L).toInt(),
+                type = d.getString("type"),
+                muscles = (d.get("muscles") as? List<*>)?.mapNotNull { it as? String } ?: emptyList(),
+                intensity = d.getString("intensity"),
+                notes = d.getString("notes")
+            )
+        }.getOrNull()
     }
 
     /**
-     * ✅ Lista en vivo + ✅ tolerante a timing de auth (currentUser null al inicio)
-     * ✅ y NO traga errores: los propaga al ViewModel (close(err))
+     * ✅ Lista en vivo + tolerante a timing de auth
      */
     override fun getWorkouts(): Flow<List<Workout>> = callbackFlow {
         var reg: ListenerRegistration? = null
@@ -86,54 +157,11 @@ class WorkoutRepositoryFirestoreImpl(
                 .addSnapshotListener { snap, err ->
                     if (err != null) {
                         Log.e("WorkoutRepo", "getWorkouts snapshot error", err)
-                        close(err) // 🔥 propagamos el error
+                        trySend(emptyList())
                         return@addSnapshotListener
                     }
 
-                    val list = snap?.documents.orEmpty().mapNotNull { d ->
-                        runCatching {
-                            val createdAtMillis = d.getTimestamp("createdAt")?.toDate()?.time
-                            val updatedAtMillis = d.getTimestamp("updatedAt")?.toDate()?.time
-                            val tsMillis = d.getLong("timestampMillis") ?: createdAtMillis ?: 0L
-
-                            val exercises = (d.get("exercises") as? List<*>)?.mapNotNull { item ->
-                                val m = item as? Map<*, *> ?: return@mapNotNull null
-                                val name = m["name"] as? String ?: ""
-                                val sets = (m["sets"] as? Number)?.toInt() ?: 0
-                                val reps = (m["reps"] as? Number)?.toInt() ?: 0
-                                val usesBodyweight = m["usesBodyweight"] as? Boolean ?: false
-                                val weightKg = (m["weightKg"] as? Number)?.toInt()
-
-                                WorkoutExercise(
-                                    name = name,
-                                    sets = sets,
-                                    reps = reps,
-                                    usesBodyweight = usesBodyweight,
-                                    weightKg = weightKg
-                                )
-                            } ?: emptyList()
-
-                            Workout(
-                                id = d.getString("id") ?: d.id,
-                                createdAt = createdAtMillis,
-                                updatedAt = updatedAtMillis,
-
-                                title = d.getString("title") ?: "",
-                                description = d.getString("description"),
-                                gymId = d.getString("gymId"),
-
-                                exercises = exercises,
-
-                                timestampMillis = tsMillis,
-                                durationMinutes = (d.getLong("durationMinutes") ?: 0L).toInt(),
-                                type = d.getString("type"),
-                                muscles = (d.get("muscles") as? List<*>)?.mapNotNull { it as? String } ?: emptyList(),
-                                intensity = d.getString("intensity"),
-                                notes = d.getString("notes")
-                            )
-                        }.getOrNull()
-                    }
-
+                    val list = snap?.documents.orEmpty().mapNotNull { d -> docToWorkout(d) }
                     trySend(list)
                 }
         }
@@ -150,8 +178,6 @@ class WorkoutRepositoryFirestoreImpl(
         }
 
         auth.addAuthStateListener(authListener)
-
-        // attach inmediato si ya está logueado
         auth.currentUser?.uid?.let { attach(it) } ?: trySend(emptyList())
 
         awaitClose {
@@ -179,52 +205,7 @@ class WorkoutRepositoryFirestoreImpl(
                 }
 
                 val d = snap?.documents?.firstOrNull()
-                if (d == null) {
-                    trySend(null)
-                    return@addSnapshotListener
-                }
-
-                val createdAtMillis = d.getTimestamp("createdAt")?.toDate()?.time
-                val updatedAtMillis = d.getTimestamp("updatedAt")?.toDate()?.time
-                val tsMillis = d.getLong("timestampMillis") ?: createdAtMillis ?: 0L
-
-                val exercises = (d.get("exercises") as? List<*>)?.mapNotNull { item ->
-                    val m = item as? Map<*, *> ?: return@mapNotNull null
-                    val name = m["name"] as? String ?: ""
-                    val sets = (m["sets"] as? Number)?.toInt() ?: 0
-                    val reps = (m["reps"] as? Number)?.toInt() ?: 0
-                    val usesBodyweight = m["usesBodyweight"] as? Boolean ?: false
-                    val weightKg = (m["weightKg"] as? Number)?.toInt()
-
-                    WorkoutExercise(
-                        name = name,
-                        sets = sets,
-                        reps = reps,
-                        usesBodyweight = usesBodyweight,
-                        weightKg = weightKg
-                    )
-                } ?: emptyList()
-
-                val workout = Workout(
-                    id = d.getString("id") ?: d.id,
-                    createdAt = createdAtMillis,
-                    updatedAt = updatedAtMillis,
-
-                    title = d.getString("title") ?: "",
-                    description = d.getString("description"),
-                    gymId = d.getString("gymId"),
-
-                    exercises = exercises,
-
-                    timestampMillis = tsMillis,
-                    durationMinutes = (d.getLong("durationMinutes") ?: 0L).toInt(),
-                    type = d.getString("type"),
-                    muscles = (d.get("muscles") as? List<*>)?.mapNotNull { it as? String } ?: emptyList(),
-                    intensity = d.getString("intensity"),
-                    notes = d.getString("notes")
-                )
-
-                trySend(workout)
+                trySend(d?.let { docToWorkout(it) })
             }
 
         awaitClose { reg.remove() }

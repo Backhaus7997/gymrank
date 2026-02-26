@@ -1,5 +1,6 @@
 package com.example.gymrank.ui.screens.ranking
 
+import android.util.Log
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
@@ -25,11 +26,15 @@ import androidx.compose.ui.unit.sp
 import androidx.navigation.NavController
 import androidx.navigation.NavType
 import androidx.navigation.navArgument
+import com.google.firebase.auth.FirebaseAuth
+import com.google.firebase.firestore.FirebaseFirestore
+import com.google.firebase.firestore.Query
+import kotlinx.coroutines.tasks.await
 import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
 
 // ============================================
-// MODELS
+// MODELS (UI local)
 // ============================================
 
 enum class RankingPeriod(val label: String) {
@@ -50,7 +55,6 @@ data class RankingEntry(
 // ============================================
 
 object RankingRoutes {
-    // ranking_details/{gymName}/{gymLocation}/{periodLabel}/{myPosition}/{myPoints}
     const val Details = "ranking_details/{gymName}/{gymLocation}/{periodLabel}/{myPosition}/{myPoints}"
 
     fun detailsRoute(
@@ -64,7 +68,6 @@ object RankingRoutes {
         return "ranking_details/${enc(gymName)}/${enc(gymLocation)}/${enc(periodLabel)}/$myPosition/$myPoints"
     }
 
-    // Si lo querés copiar al NavHost:
     val detailsArgs = listOf(
         navArgument("gymName") { type = NavType.StringType },
         navArgument("gymLocation") { type = NavType.StringType },
@@ -75,17 +78,19 @@ object RankingRoutes {
 }
 
 // ============================================
-// THEME COLORS (match screenshot vibe)
+// THEME COLORS
 // ============================================
 
-private val ScreenBg = Color(0xFF070B0A)          // very dark green/black
-private val CardBg = Color(0xFF0F1412)            // list rows
-private val CardStroke = Color(0xFF1E2622)        // subtle border
+private val ScreenBg = Color(0xFF070B0A)
+private val CardBg = Color(0xFF0F1412)
+private val CardStroke = Color(0xFF1E2622)
 private val Muted = Color(0xFF8E8E93)
 private val White = Color(0xFFFFFFFF)
-private val AccentGreen = Color(0xFF32E37A)       // neon green
-private val IconButtonBg = Color(0xFF151A18)      // circular icon bg
+private val AccentGreen = Color(0xFF32E37A)
+private val IconButtonBg = Color(0xFF151A18)
 private val Divider = Color(0xFF1C2420)
+
+private const val TAG = "RankingScreen"
 
 // ============================================
 // MAIN SCREEN
@@ -103,39 +108,136 @@ fun RankingScreen(
     onSearch: () -> Unit = {},
     onNotifications: () -> Unit = {}
 ) {
-    // Mock data
-    val weekly = remember {
-        listOf(
-            RankingEntry(1, "Mateo Rossi", 2450),
-            RankingEntry(2, "Sofía Hernández", 2100),
-            RankingEntry(3, "Lucas González", 1850),
-            RankingEntry(4, "Valentina Solís", 1640),
-            RankingEntry(5, "Joaquín Paz", 1520),
-            RankingEntry(6, "Micaela Suárez", 1450),
-            RankingEntry(7, "Tomás Herrera", 1320),
-            RankingEntry(8, "Agustín Rivas", 1280),
-            RankingEntry(9, "Franco Díaz", 1150),
-            RankingEntry(10, "Martina López", 1090),
-            RankingEntry(11, "Agustín Morales", 980),
-            RankingEntry(12, "Luciana Castro", 920),
-            RankingEntry(13, "Nicolás Méndez", 860),
-            RankingEntry(14, "Vos", 810, isMe = true),
-            RankingEntry(15, "Paula Ramírez", 750),
-            RankingEntry(16, "Santiago Torres", 690)
-        )
-    }
+    val db = remember { FirebaseFirestore.getInstance() }
 
-    val monthly = remember { weekly.map { it.copy(points = it.points * 3) } }
-    val allTime = remember { weekly.map { it.copy(points = it.points * 10) } }
+    // ✅ myUid NO queda clavado por remember: se actualiza con AuthStateListener
+    var myUid by remember { mutableStateOf<String?>(FirebaseAuth.getInstance().currentUser?.uid) }
+
+    DisposableEffect(Unit) {
+        val auth = FirebaseAuth.getInstance()
+        val listener = FirebaseAuth.AuthStateListener { a ->
+            myUid = a.currentUser?.uid
+            Log.d(TAG, "AuthState changed -> uid=${myUid}")
+        }
+        auth.addAuthStateListener(listener)
+        onDispose { auth.removeAuthStateListener(listener) }
+    }
 
     var selectedPeriod by remember { mutableStateOf(RankingPeriod.Weekly) }
 
-    val entries = remember(selectedPeriod) {
-        when (selectedPeriod) {
-            RankingPeriod.Weekly -> weekly
-            RankingPeriod.Monthly -> monthly
-            RankingPeriod.AllTime -> allTime
+    // Estado UI
+    var loading by remember { mutableStateOf(false) }
+    var error by remember { mutableStateOf<String?>(null) }
+    var entries by remember { mutableStateOf<List<RankingEntry>>(emptyList()) }
+    var myPositionState by remember { mutableStateOf(myPosition) }
+    var myPointsState by remember { mutableStateOf(myPoints) }
+
+    // gymId leído del usuario
+    var gymId by remember { mutableStateOf<String?>(null) }
+
+    // Helpers
+    fun pointsField(period: RankingPeriod): String = when (period) {
+        RankingPeriod.Weekly -> "weeklyPoints"
+        RankingPeriod.Monthly -> "monthlyPoints"
+        RankingPeriod.AllTime -> "allTimePoints"
+    }
+
+    suspend fun loadGymId(uid: String) {
+        loading = true
+        error = null
+
+        runCatching {
+            val meDoc = db.collection("users").document(uid).get().await()
+            val gId = meDoc.getString("gymId")
+            if (gId.isNullOrBlank()) {
+                throw IllegalStateException("El usuario no tiene gymId seteado (users/$uid)")
+            }
+            gymId = gId
+            Log.d(TAG, "GymId loaded -> $gId")
+        }.onFailure { e ->
+            Log.e(TAG, "Error loading gymId", e)
+            error = e.message ?: "Error leyendo gymId"
+            gymId = null
         }
+
+        loading = false
+    }
+
+    suspend fun loadRanking(uid: String, gId: String, period: RankingPeriod) {
+        loading = true
+        error = null
+
+        val pf = pointsField(period)
+
+        runCatching {
+            // TOP 50
+            val snap = db.collection("users")
+                .whereEqualTo("gymId", gId)
+                .orderBy(pf, Query.Direction.DESCENDING)
+                .limit(50)
+                .get()
+                .await()
+
+            val list = snap.documents.mapIndexed { index, doc ->
+                val id = doc.id
+                RankingEntry(
+                    position = index + 1,
+                    name = doc.getString("displayName") ?: "Sin nombre",
+                    points = (doc.getLong(pf) ?: 0L).toInt(),
+                    isMe = id == uid
+                )
+            }
+
+            entries = list
+
+            val me = list.firstOrNull { it.isMe }
+            if (me != null) {
+                myPositionState = me.position
+                myPointsState = me.points
+            } else {
+                // fallback: leer mis puntos
+                val meDoc = db.collection("users").document(uid).get().await()
+                val mePts = (meDoc.getLong(pf) ?: 0L).toInt()
+                myPointsState = mePts
+
+                // posición MVP: cuántos tienen puntos mayores
+                val higherSnap = db.collection("users")
+                    .whereEqualTo("gymId", gId)
+                    .whereGreaterThan(pf, mePts)
+                    .get()
+                    .await()
+
+                myPositionState = higherSnap.size() + 1
+            }
+
+            Log.d(TAG, "Ranking loaded -> entries=${entries.size}, mePos=$myPositionState, mePts=$myPointsState")
+        }.onFailure { e ->
+            Log.e(TAG, "Error loading ranking (maybe missing index?)", e)
+            error = e.message ?: "Error cargando ranking"
+            entries = emptyList()
+        }
+
+        loading = false
+    }
+
+    // 1) cuando cambia el user -> cargar gymId
+    LaunchedEffect(myUid) {
+        val uid = myUid
+        if (uid.isNullOrBlank()) {
+            error = "No hay usuario logueado"
+            entries = emptyList()
+            gymId = null
+            loading = false
+        } else {
+            loadGymId(uid)
+        }
+    }
+
+    // 2) cuando cambia gymId o periodo -> cargar ranking
+    LaunchedEffect(gymId, selectedPeriod, myUid) {
+        val uid = myUid ?: return@LaunchedEffect
+        val gId = gymId ?: return@LaunchedEffect
+        loadRanking(uid, gId, selectedPeriod)
     }
 
     Scaffold(
@@ -151,22 +253,21 @@ fun RankingScreen(
         },
         bottomBar = {
             MyPositionBar(
-                position = myPosition,
-                points = myPoints,
+                position = myPositionState,
+                points = myPointsState,
                 onViewDetails = {
                     navController.navigate(
                         RankingRoutes.detailsRoute(
                             gymName = gymName,
                             gymLocation = gymLocation,
                             periodLabel = selectedPeriod.label,
-                            myPosition = myPosition,
-                            myPoints = myPoints
+                            myPosition = myPositionState,
+                            myPoints = myPointsState
                         )
                     )
                 }
             )
         }
-
     ) { padding ->
         Column(
             modifier = Modifier
@@ -181,26 +282,52 @@ fun RankingScreen(
 
             Spacer(Modifier.height(14.dp))
 
-            val top3 = entries.filter { it.position in 1..3 }.sortedBy { it.position }
-            if (top3.size == 3) {
-                PodiumTop3(
-                    first = top3[0],
-                    second = top3[1],
-                    third = top3[2]
-                )
-            }
-
-            Spacer(Modifier.height(16.dp))
-
-            LazyColumn(
-                modifier = Modifier.fillMaxSize(),
-                contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
-                verticalArrangement = Arrangement.spacedBy(10.dp)
-            ) {
-                items(entries.filter { it.position >= 4 && !it.isMe }) { entry ->
-                    RankingRow(entry = entry)
+            when {
+                loading -> {
+                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        CircularProgressIndicator(color = AccentGreen)
+                    }
                 }
-                item { Spacer(Modifier.height(90.dp)) }
+
+                error != null -> {
+                    Box(
+                        Modifier
+                            .fillMaxSize()
+                            .padding(18.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = error!!,
+                            color = White,
+                            fontSize = 14.sp
+                        )
+                    }
+                }
+
+                else -> {
+                    val top3 = entries.filter { it.position in 1..3 }.sortedBy { it.position }
+                    if (top3.size == 3) {
+                        PodiumTop3(
+                            first = top3[0],
+                            second = top3[1],
+                            third = top3[2]
+                        )
+                        Spacer(Modifier.height(16.dp))
+                    } else {
+                        Spacer(Modifier.height(8.dp))
+                    }
+
+                    LazyColumn(
+                        modifier = Modifier.fillMaxSize(),
+                        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        items(entries.filter { it.position >= 4 && !it.isMe }) { entry ->
+                            RankingRow(entry = entry)
+                        }
+                        item { Spacer(Modifier.height(90.dp)) }
+                    }
+                }
             }
         }
     }
@@ -314,7 +441,8 @@ private fun PeriodTabs(
     selected: RankingPeriod,
     onSelected: (RankingPeriod) -> Unit
 ) {
-    val items = RankingPeriod.entries
+    // ✅ (evitamos Enum.entries si te estuviera rompiendo por compat)
+    val items = remember { RankingPeriod.values().toList() }
     val selectedIndex = items.indexOf(selected)
 
     Column(modifier = Modifier.fillMaxWidth()) {
@@ -379,29 +507,9 @@ private fun PodiumTop3(
         horizontalArrangement = Arrangement.SpaceEvenly,
         verticalAlignment = Alignment.Top
     ) {
-        PodiumCard(
-            entry = second,
-            size = 76.dp,
-            label = "#2",
-            medal = "🥈",
-            isWinner = false
-        )
-
-        PodiumCard(
-            entry = first,
-            size = 108.dp,
-            label = "#1",
-            medal = "🥇",
-            isWinner = true
-        )
-
-        PodiumCard(
-            entry = third,
-            size = 76.dp,
-            label = "#3",
-            medal = "🥉",
-            isWinner = false
-        )
+        PodiumCard(entry = second, size = 76.dp, label = "#2", medal = "🥈", isWinner = false)
+        PodiumCard(entry = first, size = 108.dp, label = "#1", medal = "🥇", isWinner = true)
+        PodiumCard(entry = third, size = 76.dp, label = "#3", medal = "🥉", isWinner = false)
     }
 }
 
@@ -429,10 +537,7 @@ private fun PodiumCard(
                 ),
             contentAlignment = Alignment.Center
         ) {
-            Text(
-                text = medal,
-                fontSize = if (isWinner) 44.sp else 32.sp
-            )
+            Text(text = medal, fontSize = if (isWinner) 44.sp else 32.sp)
         }
 
         Spacer(Modifier.height(10.dp))
@@ -467,7 +572,7 @@ private fun PodiumCard(
 }
 
 // ============================================
-// RANKING ROW
+// ROW
 // ============================================
 
 @Composable
@@ -540,7 +645,7 @@ private fun RankingRow(
 }
 
 // ============================================
-// BOTTOM BAR
+// BOTTOM BAR (my position)
 // ============================================
 
 @Composable

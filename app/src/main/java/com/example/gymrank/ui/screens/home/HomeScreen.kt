@@ -1,3 +1,8 @@
+@file:OptIn(
+    ExperimentalMaterial3Api::class,
+    ExperimentalLayoutApi::class
+)
+
 package com.example.gymrank.ui.screens.home
 
 import androidx.compose.foundation.Image
@@ -12,6 +17,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.FitnessCenter
+import androidx.compose.material.icons.filled.FlashOn
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Settings
@@ -42,6 +48,10 @@ import com.google.firebase.firestore.FirebaseFirestore
 import java.util.Calendar
 import java.util.Locale
 import kotlin.math.max
+import kotlinx.coroutines.tasks.await
+import kotlinx.coroutines.delay
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 
 // ============================================
 // Screen
@@ -62,7 +72,7 @@ fun HomeScreen(
         selectedGym?.let { viewModel.setGymData(it) }
     }
 
-    // ✅ SETS POR MUSCULO (semana) -> sigue conectado a entrenamientos reales
+    // ✅ SETS POR MUSCULO (semana) -> entrenamientos reales
     val workoutRepo = remember { WorkoutRepositoryFirestoreImpl() }
     val allWorkouts by remember { workoutRepo.getWorkouts() }.collectAsState(initial = emptyList())
     val weekRange = remember { currentWeekRangeMillis() }
@@ -83,7 +93,9 @@ fun HomeScreen(
     // ============================================
 
     val dayLabelsShort = remember { listOf("L", "M", "M", "J", "V", "S", "D") }
-    val dayLabelsLong = remember { listOf("Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo") }
+    val dayLabelsLong = remember {
+        listOf("Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo")
+    }
     val dayKeys = remember { listOf("mon", "tue", "wed", "thu", "fri", "sat", "sun") }
 
     val todayIndex = remember { todayIndexMondayFirst() } // 0..6
@@ -96,6 +108,19 @@ fun HomeScreen(
     val uid = remember { FirebaseAuth.getInstance().currentUser?.uid.orEmpty() }
     val db = remember { FirebaseFirestore.getInstance() }
 
+    var profileName by remember { mutableStateOf("") }
+
+    LaunchedEffect(uid) {
+        if (uid.isBlank()) return@LaunchedEffect
+
+        runCatching {
+            val snap = db.collection("users").document(uid).get().await()
+            profileName = snap.getString("name")
+                ?: snap.getString("username")
+                        ?: ""
+        }
+    }
+
     // Cache local del plan semanal: dayKey -> muscles
     var weekPlan by remember { mutableStateOf<Map<String, List<String>>>(emptyMap()) }
     var isPlanLoading by remember { mutableStateOf(false) }
@@ -104,10 +129,8 @@ fun HomeScreen(
 
     // ✅ Auto-ocultar mensaje de éxito luego de un tiempo
     LaunchedEffect(saveStatus) {
-        // Solo auto-ocultar mensajes de éxito
         if (saveStatus != null && saveStatus!!.contains("✅")) {
-            kotlinx.coroutines.delay(2500) // 2.5s
-            // Evita borrar si cambió durante la espera
+            delay(2500)
             if (saveStatus != null && saveStatus!!.contains("✅")) {
                 saveStatus = null
             }
@@ -160,7 +183,8 @@ fun HomeScreen(
                 val map = mutableMapOf<String, List<String>>()
                 qs.documents.forEach { doc ->
                     val key = doc.id
-                    val muscles = (doc.get("muscles") as? List<*>)?.mapNotNull { it as? String }.orEmpty()
+                    val muscles =
+                        (doc.get("muscles") as? List<*>)?.mapNotNull { it as? String }.orEmpty()
                     map[key] = normalizeMuscles(muscles)
                 }
                 weekPlan = map
@@ -195,7 +219,7 @@ fun HomeScreen(
             .set(payload)
             .addOnSuccessListener {
                 weekPlan = weekPlan.toMutableMap().apply { put(dayKey, normalized) }
-                saveStatus = "Plan guardado!"
+                saveStatus = "✅ Plan guardado!"
             }
             .addOnFailureListener { e ->
                 saveStatus = e.message ?: "Error guardando plan"
@@ -209,6 +233,10 @@ fun HomeScreen(
 
     val selectedDayKey = dayKeys.getOrNull(selectedDayIndex) ?: "mon"
     val selectedDayMuscles = weekPlan[selectedDayKey].orEmpty()
+
+    // ✅ label dinámico del botón del plan (si hay algo cargado en cualquier día -> Editar)
+    val hasAnyPlan = remember(weekPlan) { weekPlan.values.any { it.isNotEmpty() } }
+    val planButtonLabel = if (hasAnyPlan) "Editar plan" else "Cargar plan"
 
     // ============================================
     // ✅ BODY COUNTS: ahora vienen del plan del día seleccionado
@@ -227,14 +255,14 @@ fun HomeScreen(
     }
 
     // ============================================
-    // UI
+    // UI MODALS
     // ============================================
 
     // Modal 1: Lista de días
     if (showPlanDaysModal) {
         AlertDialog(
             onDismissRequest = { showPlanDaysModal = false },
-            title = { Text("Cargar plan") },
+            title = { Text(planButtonLabel) },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     dayLabelsLong.forEachIndexed { idx, label ->
@@ -344,6 +372,10 @@ fun HomeScreen(
         )
     }
 
+    // ============================================
+    // MAIN LIST
+    // ============================================
+
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
         contentPadding = PaddingValues(bottom = 24.dp),
@@ -351,7 +383,7 @@ fun HomeScreen(
     ) {
         item {
             HomeTopBar(
-                userName = uiState.userName,
+                userName = if (profileName.isNotBlank()) profileName else uiState.userName,
                 onOpenRanking = onOpenRanking,
                 onLogout = onLogout
             )
@@ -377,7 +409,7 @@ fun HomeScreen(
         // ✅ Calendar
         item {
             WorkoutCalendarCard(
-                modifier = Modifier.padding(horizontal = 16.dp),
+                modifier = Modifier.padding(horizontal = 14.dp),
                 weeklyGoal = 7,
                 completed = completedThisWeek,
                 dayLabelsShort = dayLabelsShort,
@@ -397,6 +429,7 @@ fun HomeScreen(
                 isLoading = isPlanLoading,
                 error = planError,
                 saveStatus = saveStatus,
+                planButtonLabel = planButtonLabel,
                 onOpenPlan = { showPlanDaysModal = true }
             )
         }
@@ -404,8 +437,7 @@ fun HomeScreen(
         item {
             SetsByMuscleCard(
                 modifier = Modifier.padding(horizontal = 16.dp),
-                items = setsByMuscleItems,
-                onSeeMore = { /* TODO */ }
+                items = setsByMuscleItems
             )
         }
 
@@ -815,7 +847,7 @@ private fun DayPillSelectable(
 }
 
 // ============================================
-// ✅ Mi Rutina card (feed)
+// ✅ Mi Rutina card (feed) - CHIPS COMO 2DA IMAGEN
 // ============================================
 
 @Composable
@@ -827,6 +859,7 @@ private fun RoutineSummaryCard(
     isLoading: Boolean,
     error: String?,
     saveStatus: String?,
+    planButtonLabel: String,
     onOpenPlan: () -> Unit
 ) {
     GlassCard(modifier = modifier) {
@@ -851,7 +884,7 @@ private fun RoutineSummaryCard(
 
             TextButton(onClick = onOpenPlan) {
                 Text(
-                    text = "Cargar plan",
+                    text = planButtonLabel,
                     color = GymRankColors.PrimaryAccent,
                     fontWeight = FontWeight.Bold
                 )
@@ -894,7 +927,6 @@ private fun RoutineSummaryCard(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(10.dp)
         ) {
-            // ✅ Badge "HOY" SOLO si el seleccionado es hoy
             if (isSelectedToday) {
                 Box(
                     modifier = Modifier
@@ -932,76 +964,100 @@ private fun RoutineSummaryCard(
                     .padding(12.dp)
             ) {
                 Text(
-                    text = "No hay músculos cargados para este día. Tocá “Cargar plan” para configurarlo.",
+                    text = "No hay músculos cargados para este día. Tocá “${planButtonLabel}” para configurarlo.",
                     color = DesignTokens.Colors.TextSecondary,
                     fontSize = 12.sp,
                     lineHeight = 16.sp
                 )
             }
         } else {
-            FlowChips(musclesForSelectedDay)
+            RoutineChipsTwoColumns(items = musclesForSelectedDay)
+        }
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun RoutineChipsTwoColumns(items: List<String>) {
+    FlowRow(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+        maxItemsInEachRow = 2
+    ) {
+        items.forEach { label ->
+            RoutineChip(
+                label = label,
+                modifier = Modifier
+                    // "mitad" del ancho, con margen para el spacing
+                    .fillMaxWidth(0.48f)
+            )
         }
     }
 }
 
 @Composable
-private fun FlowChips(items: List<String>) {
-    val rows = remember(items) { chunkToRows(items, maxPerRow = 3) }
-
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        rows.forEach { row ->
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                row.forEach { label ->
-                    Chip(label)
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun Chip(label: String) {
-    Box(
-        modifier = Modifier
-            .clip(RoundedCornerShape(999.dp))
+private fun RoutineChip(
+    label: String,
+    modifier: Modifier = Modifier
+) {
+    Row(
+        modifier = modifier
+            .height(44.dp)
+            .clip(RoundedCornerShape(14.dp))
             .background(DesignTokens.Colors.SurfaceElevated)
             .border(
                 width = 1.dp,
-                color = DesignTokens.Colors.SurfaceInputs,
-                shape = RoundedCornerShape(999.dp)
+                color = GymRankColors.PrimaryAccent.copy(alpha = 0.55f),
+                shape = RoundedCornerShape(14.dp)
             )
-            .padding(horizontal = 12.dp, vertical = 7.dp)
+            .padding(horizontal = 12.dp),
+        verticalAlignment = Alignment.CenterVertically
     ) {
+        // ícono como en la 2da imagen
+        Box(
+            modifier = Modifier
+                .size(22.dp)
+                .clip(RoundedCornerShape(8.dp))
+                .background(GymRankColors.PrimaryAccent.copy(alpha = 0.18f))
+                .border(
+                    1.dp,
+                    GymRankColors.PrimaryAccent.copy(alpha = 0.35f),
+                    RoundedCornerShape(8.dp)
+                ),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(
+                imageVector = Icons.Default.FlashOn,
+                contentDescription = null,
+                tint = GymRankColors.PrimaryAccent,
+                modifier = Modifier.size(14.dp)
+            )
+        }
+
+        Spacer(Modifier.width(10.dp))
+
         Text(
             text = label,
             color = DesignTokens.Colors.TextPrimary,
-            fontSize = 12.sp,
-            fontWeight = FontWeight.SemiBold
+            fontSize = 13.sp,
+            fontWeight = FontWeight.SemiBold,
+            maxLines = 1
         )
     }
 }
 
-private fun chunkToRows(items: List<String>, maxPerRow: Int): List<List<String>> {
-    if (items.isEmpty()) return emptyList()
-    val out = mutableListOf<List<String>>()
-    var i = 0
-    while (i < items.size) {
-        out.add(items.subList(i, minOf(i + maxPerRow, items.size)))
-        i += maxPerRow
-    }
-    return out
-}
-
 // ============================================
-// SETS BY MUSCLE
+// SETS BY MUSCLE - VER MÁS / VER MENOS (EXPAND)
 // ============================================
 
 @Composable
 private fun SetsByMuscleCard(
     modifier: Modifier = Modifier,
-    items: List<Pair<String, Int>>,
-    onSeeMore: () -> Unit
+    items: List<Pair<String, Int>>
 ) {
+    var expanded by remember { mutableStateOf(false) }
+
     GlassCard(modifier = modifier) {
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -1035,19 +1091,116 @@ private fun SetsByMuscleCard(
 
         val maxVal = (items.maxOfOrNull { it.second } ?: 0).coerceAtLeast(1)
 
-        LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            items(items) { (name, value) ->
-                SetMiniCard(name = name, value = value, max = maxVal)
+        if (!expanded) {
+            // ✅ vista compacta (como tu 1ra imagen: 4 cards)
+            val preview = remember(items) { items.take(4) }
+
+            LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                items(preview) { (name, value) ->
+                    SetMiniCard(name = name, value = value, max = maxVal)
+                }
+            }
+
+            Spacer(Modifier.height(12.dp))
+
+            Text(
+                text = "Ver más",
+                color = GymRankColors.PrimaryAccent,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier.clickable { expanded = true }
+            )
+        } else {
+            // ✅ vista expandida (como 2da imagen: grilla 3 columnas)
+            SetsGrid3Columns(items = items, maxVal = maxVal)
+
+            Spacer(Modifier.height(12.dp))
+
+            Text(
+                text = "Ver menos",
+                color = GymRankColors.PrimaryAccent,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier.clickable { expanded = false }
+            )
+        }
+    }
+}
+
+@Composable
+private fun SetsGrid3Columns(
+    items: List<Pair<String, Int>>,
+    maxVal: Int
+) {
+    val rows = remember(items) { chunkToRows(items, maxPerRow = 3) }
+
+    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        rows.forEach { row ->
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                row.forEach { (name, value) ->
+                    Box(modifier = Modifier.weight(1f)) {
+                        SetGridCard(name = name, value = value, max = maxVal)
+                    }
+                }
+
+                // si la última fila tiene menos de 3, completamos espacio para que quede alineado
+                val missing = 3 - row.size
+                repeat(missing) {
+                    Spacer(modifier = Modifier.weight(1f))
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SetGridCard(
+    name: String,
+    value: Int,
+    max: Int
+) {
+    val pct = (value.toFloat() / max.toFloat()).coerceIn(0f, 1f)
+
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        Box(
+            modifier = Modifier
+                .height(74.dp)
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(16.dp))
+                .background(DesignTokens.Colors.SurfaceElevated)
+                .border(1.dp, DesignTokens.Colors.SurfaceInputs, RoundedCornerShape(16.dp)),
+            contentAlignment = Alignment.Center
+        ) {
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Text(
+                    text = value.toString(),
+                    color = DesignTokens.Colors.TextPrimary,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 16.sp
+                )
+                Spacer(Modifier.height(6.dp))
+                LinearProgressIndicator(
+                    progress = { pct },
+                    modifier = Modifier
+                        .width(52.dp)
+                        .height(6.dp)
+                        .clip(RoundedCornerShape(999.dp)),
+                    color = GymRankColors.PrimaryAccent,
+                    trackColor = DesignTokens.Colors.SurfaceInputs
+                )
             }
         }
 
-        Spacer(Modifier.height(12.dp))
+        Spacer(Modifier.height(8.dp))
 
         Text(
-            text = "Ver más",
-            color = GymRankColors.PrimaryAccent,
-            fontWeight = FontWeight.Bold,
-            modifier = Modifier.clickable { onSeeMore() }
+            text = name,
+            fontSize = 12.sp,
+            color = DesignTokens.Colors.TextSecondary,
+            textAlign = TextAlign.Center,
+            maxLines = 2,
+            lineHeight = 14.sp
         )
     }
 }
@@ -1195,20 +1348,16 @@ private fun buildMuscleCountsFromRoutinePlan(
     fun incFront(id: MuscleId) { front[id] = (front[id] ?: 0) + 1 }
     fun incBack(id: MuscleId) { back[id] = (back[id] ?: 0) + 1 }
 
-    // ✅ Distinct: si elegís "Pecho" dos veces, no suma
     muscles.mapNotNull { canonToMuscleId(it) }
         .distinct()
         .forEach { id ->
             when (id) {
-                // ambos lados
                 MuscleId.Shoulders, MuscleId.Traps, MuscleId.Forearms, MuscleId.Calves -> {
                     incFront(id); incBack(id)
                 }
 
-                // solo frente
                 MuscleId.Chest, MuscleId.Abs, MuscleId.Obliques, MuscleId.Biceps, MuscleId.Quads -> incFront(id)
 
-                // solo espalda
                 MuscleId.Triceps, MuscleId.Lats, MuscleId.Back, MuscleId.LowerBack, MuscleId.Glutes, MuscleId.Hamstrings -> incBack(id)
 
                 else -> incFront(id)
@@ -1327,7 +1476,6 @@ fun MuscleBack(modifier: Modifier = Modifier) {
 private fun countUniqueWorkoutDaysThisWeek(workouts: List<Workout>): Int {
     if (workouts.isEmpty()) return 0
 
-    // Normaliza cada workout a "día" (midnight) y cuenta únicos
     val uniqueDays = workouts.mapNotNull { w ->
         val ts = w.timestampMillis ?: w.createdAt
         ts?.let { startOfDayMillis(it) }
@@ -1344,4 +1492,15 @@ private fun startOfDayMillis(epochMillis: Long): Long {
     cal.set(Calendar.SECOND, 0)
     cal.set(Calendar.MILLISECOND, 0)
     return cal.timeInMillis
+}
+
+private fun <T> chunkToRows(items: List<T>, maxPerRow: Int): List<List<T>> {
+    if (items.isEmpty()) return emptyList()
+    val out = mutableListOf<List<T>>()
+    var i = 0
+    while (i < items.size) {
+        out.add(items.subList(i, minOf(i + maxPerRow, items.size)))
+        i += maxPerRow
+    }
+    return out
 }

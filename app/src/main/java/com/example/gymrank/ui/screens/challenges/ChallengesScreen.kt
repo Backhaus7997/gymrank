@@ -35,6 +35,7 @@ import com.example.gymrank.ui.components.GlassCard
 import com.example.gymrank.ui.theme.DesignTokens
 import com.example.gymrank.ui.theme.GymRankColors
 import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.clickable
 
 
 @Composable
@@ -66,7 +67,7 @@ fun ChallengesScreen(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Text("Desafíos", color = textPrimary, fontSize = 26.sp, fontWeight = FontWeight.Bold)
+                Text("Desafíos", color = textPrimary, fontSize = 24.sp, fontWeight = FontWeight.Bold)
                 IconButton(onClick = { /* TODO menu */ }) {
                     Icon(Icons.Filled.Menu, contentDescription = "Menú", tint = textPrimary)
                 }
@@ -166,22 +167,23 @@ private fun FeatureButton(
     modifier: Modifier = Modifier
 ) {
     val gradient = Brush.verticalGradient(listOf(surface, surface.copy(alpha = 0.86f)))
+    val shape = RoundedCornerShape(16.dp)
 
     GlassCard(
         modifier = modifier,
         contentPadding = PaddingValues(0.dp)
     ) {
-        Surface(
-            onClick = item.onClick,
-            shape = RoundedCornerShape(16.dp),
-            color = Color.Transparent,
-            modifier = Modifier.fillMaxWidth()
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(shape)
+                .clickable { item.onClick() } // ✅ en vez de Surface(onClick=)
         ) {
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
                     .heightIn(min = 78.dp)
-                    .background(gradient, RoundedCornerShape(16.dp))
+                    .background(gradient, shape)
                     .padding(start = 12.dp, end = 8.dp, top = 12.dp, bottom = 12.dp),
                 horizontalArrangement = Arrangement.spacedBy(10.dp),
                 verticalAlignment = Alignment.CenterVertically
@@ -202,8 +204,7 @@ private fun FeatureButton(
                 }
 
                 BoxWithConstraints(modifier = Modifier.weight(1f)) {
-                    val isNarrow = maxWidth < 140.dp
-
+                    val isNarrow = this.maxWidth < 140.dp
                     val titleSize = if (isNarrow) 12.sp else 13.sp
                     val subtitleSize = if (isNarrow) 12.sp else 13.sp
 
@@ -213,7 +214,7 @@ private fun FeatureButton(
                             color = textPrimary,
                             fontSize = titleSize,
                             fontWeight = FontWeight.SemiBold,
-                            maxLines = 1, // clave para que no haga 2 líneas raras
+                            maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
                             lineHeight = (titleSize.value + 1).sp
                         )
@@ -228,7 +229,6 @@ private fun FeatureButton(
                         )
                     }
                 }
-
 
                 Box(
                     modifier = Modifier
@@ -315,30 +315,56 @@ private fun SegmentedPill(
     textSecondary: Color,
     onClick: () -> Unit
 ) {
+    val shape = RoundedCornerShape(999.dp)
+
     Surface(
-        onClick = onClick,
-        shape = RoundedCornerShape(999.dp),
+        shape = shape,
         color = if (selected) bgSelected else bgUnselected,
         border = border,
         shadowElevation = 0.dp,
-        modifier = modifier.height(40.dp)
+        modifier = modifier
+            .height(44.dp)
+            .clip(shape)
+            .clickable { onClick() } // ✅ en vez de Surface(onClick=)
     ) {
-        Row(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(horizontal = 12.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.Center
+        BoxWithConstraints(
+            modifier = Modifier.fillMaxSize()
         ) {
-            Icon(icon, contentDescription = null, tint = accent, modifier = Modifier.size(18.dp))
-            Spacer(Modifier.width(8.dp))
-            Text(
-                text = label,
-                color = if (selected) textPrimary else textSecondary,
-                fontWeight = FontWeight.Medium,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
+            val isTight = this.maxWidth < 115.dp
+            val isVeryTight = this.maxWidth < 95.dp
+
+            val horizontalPadding = if (isTight) 8.dp else 12.dp
+            val iconSize = if (isTight) 16.dp else 18.dp
+            val spacer = if (isTight) 6.dp else 8.dp
+            val textSize = if (isTight) 12.sp else 13.sp
+
+            Row(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(horizontal = horizontalPadding),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.Center
+            ) {
+                if (!isVeryTight) {
+                    Icon(
+                        icon,
+                        contentDescription = null,
+                        tint = accent,
+                        modifier = Modifier.size(iconSize)
+                    )
+                    Spacer(Modifier.width(spacer))
+                }
+
+                Text(
+                    text = label,
+                    color = if (selected) textPrimary else textSecondary,
+                    fontWeight = FontWeight.Medium,
+                    fontSize = textSize,
+                    maxLines = 1,
+                    softWrap = false,
+                    overflow = TextOverflow.Clip
+                )
+            }
         }
     }
 }

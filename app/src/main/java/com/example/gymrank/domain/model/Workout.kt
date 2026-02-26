@@ -11,6 +11,8 @@ data class Workout(
     val gymId: String? = null,
     val exercises: List<WorkoutExercise> = emptyList(),
 
+    val visibility: String = "PUBLIC", // PUBLIC | FRIENDS | PRIVATE
+
     // Campos que ya tenías (los dejamos por compatibilidad)
     val timestampMillis: Long? = null,
     val durationMinutes: Int? = null,
@@ -25,5 +27,6 @@ data class WorkoutExercise(
     val sets: Int = 0,
     val reps: Int = 0,
     val usesBodyweight: Boolean = false,
-    val weightKg: Int? = null
+    val weightKg: Int? = null,
+    val weekday: Int? = null // 1..7 (Lunes..Domingo)
 )

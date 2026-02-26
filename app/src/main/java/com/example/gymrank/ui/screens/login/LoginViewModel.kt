@@ -54,6 +54,53 @@ class LoginViewModel(
         }
     }
 
+    fun signInWithGoogle(idToken: String) {
+        viewModelScope.launch {
+            _uiState.value = LoginUiState.Loading
+
+            val result = authRepository.signInWithGoogle(idToken)
+
+            _uiState.value = result.fold(
+                onSuccess = { user -> LoginUiState.Success(user) },
+                onFailure = { error ->
+                    LoginUiState.Error(message = error.message ?: "Error al iniciar sesión con Google")
+                }
+            )
+        }
+    }
+
+    fun sendPasswordResetEmail(onMessage: (String) -> Unit) {
+        val emailValue = _email.value.trim()
+
+        if (emailValue.isBlank()) {
+            _emailError.value = "Ingresá tu correo"
+            onMessage("Ingresá tu correo para recuperar la contraseña")
+            return
+        }
+
+        // Validación básica (si ya tenés validateInputs, podés reutilizar)
+        val emailRegex = android.util.Patterns.EMAIL_ADDRESS
+        if (!emailRegex.matcher(emailValue).matches()) {
+            _emailError.value = "Correo inválido"
+            onMessage("Ingresá un correo válido")
+            return
+        }
+
+        viewModelScope.launch {
+            // opcional: mostrar loading
+            val result = authRepository.sendPasswordResetEmail(emailValue)
+
+            result.fold(
+                onSuccess = {
+                    onMessage("Te enviamos un email para restablecer tu contraseña")
+                },
+                onFailure = { e ->
+                    onMessage(e.message ?: "No se pudo enviar el email de recuperación")
+                }
+            )
+        }
+    }
+
     private fun validateInputs(): Boolean {
         var isValid = true
 

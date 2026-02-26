@@ -20,7 +20,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.NavHostController
 import androidx.navigation.compose.currentBackStackEntryAsState
@@ -67,6 +69,7 @@ fun GymRankBottomBar(navController: NavHostController) {
                     val selected = item.route == currentRoute
                     val tint = if (selected) Color(0xFF2EF2A0) else Color(0xFF8E8E93)
                     val labelColor = if (selected) Color(0xFFFFFFFF) else Color(0xFF8E8E93)
+
                     Column(
                         modifier = Modifier
                             .weight(1f)
@@ -81,11 +84,27 @@ fun GymRankBottomBar(navController: NavHostController) {
                                         restoreState = true
                                     }
                                 }
-                            },
+                            }
+                            // leve margen lateral para que el texto no quede pegado
+                            .padding(horizontal = 2.dp),
                         horizontalAlignment = Alignment.CenterHorizontally
                     ) {
-                        Icon(imageVector = item.icon, contentDescription = item.label, tint = tint)
-                        Text(text = item.label, color = labelColor, fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal)
+                        Icon(
+                            imageVector = item.icon,
+                            contentDescription = item.label,
+                            tint = tint
+                        )
+
+                        // ✅ Siempre visible, pero nunca wrappea
+                        Text(
+                            text = item.label,
+                            color = labelColor,
+                            fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
+                            fontSize = 14.sp,
+                            maxLines = 1,
+                            softWrap = false,
+                            overflow = TextOverflow.Ellipsis
+                        )
                     }
                 }
             }

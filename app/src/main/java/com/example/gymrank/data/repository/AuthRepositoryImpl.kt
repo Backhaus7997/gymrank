@@ -75,7 +75,7 @@ class AuthRepositoryImpl(
         }
     }
 
-    // ✅ NUEVO: Google signup/login con idToken
+    // ✅ Google signup/login con idToken
     override suspend fun signInWithGoogle(idToken: String): Result<User> {
         return try {
             val credential = GoogleAuthProvider.getCredential(idToken, null)
@@ -90,7 +90,7 @@ class AuthRepositoryImpl(
 
             val userRef = db.collection("users").document(user.id)
 
-            // ✅ createdAt solo si no existe (para que quede lindo y estable)
+            // ✅ createdAt solo si no existe
             val snap = userRef.get().await()
 
             val data = mutableMapOf<String, Any?>(
@@ -108,6 +108,16 @@ class AuthRepositoryImpl(
             userRef.set(data, SetOptions.merge()).await()
 
             Result.success(user)
+        } catch (e: Exception) {
+            Result.failure(Exception(firebaseAuthMessage(e)))
+        }
+    }
+
+    // ✅ NUEVO: enviar email de recuperación de contraseña
+    override suspend fun sendPasswordResetEmail(email: String): Result<Unit> {
+        return try {
+            auth.sendPasswordResetEmail(email.trim()).await()
+            Result.success(Unit)
         } catch (e: Exception) {
             Result.failure(Exception(firebaseAuthMessage(e)))
         }

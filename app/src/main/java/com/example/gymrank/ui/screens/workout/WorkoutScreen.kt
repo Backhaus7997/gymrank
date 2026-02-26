@@ -23,7 +23,6 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -35,6 +34,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.gymrank.data.repository.WeeklyPlanRepositoryFirestoreImpl
 import com.example.gymrank.data.repository.WorkoutRepositoryFirestoreImpl
 import com.example.gymrank.domain.model.Workout
 import com.example.gymrank.domain.model.WorkoutExercise
@@ -53,6 +53,9 @@ fun WorkoutScreen(
     onHistoryClick: () -> Unit = {},
     onProgressClick: () -> Unit = {},
     onCreateRoutineClick: () -> Unit = {},
+
+    // ✅ NUEVO: en vez de popup, navegar a otra pantalla
+    onRecoveryDetailsClick: (List<MuscleRecoveryItem>) -> Unit = {},
 ) {
     val bg = runCatching { DesignTokens.Colors.BackgroundBase }.getOrElse { Color(0xFF000000) }
     val surface = runCatching { DesignTokens.Colors.SurfaceElevated }.getOrElse { Color(0xFF101010) }
@@ -62,19 +65,27 @@ fun WorkoutScreen(
     val accent = runCatching { GymRankColors.PrimaryAccent }.getOrElse { Color(0xFF2EF2A0) }
 
     // =========================
-    // Workouts (últimos 3)
+    // Workouts (Firestore)
     // =========================
-    val repo = remember { WorkoutRepositoryFirestoreImpl() }
-    val allWorkouts by remember { repo.getWorkouts() }.collectAsState(initial = emptyList())
+    val workoutRepo = remember { WorkoutRepositoryFirestoreImpl() }
+    val allWorkouts by remember { workoutRepo.getWorkouts() }.collectAsState(initial = emptyList())
 
     val last3 = remember(allWorkouts) {
         allWorkouts
-            .sortedByDescending { it.timestampMillis ?: it.createdAt ?: 0L }
+            .sortedByDescending { it.timestampMillis ?: it.createdAt ?: it.updatedAt ?: 0L }
             .take(3)
     }
 
+    val planRepo = remember { WeeklyPlanRepositoryFirestoreImpl() }
+    val weeklyPlan by remember { planRepo.getWeeklyPlan() }.collectAsState(initial = null)
+
+    val recoveryAll = remember(allWorkouts, weeklyPlan) {
+        RecoveryEstimator.estimate(allWorkouts, weeklyPlan)
+    }
+    val recoveryTop = remember(recoveryAll) { recoveryAll.take(2) }
+
     // =========================
-    // Bottom sheet (idéntico a historial)
+    // Bottom sheet: workout details
     // =========================
     var selectedWorkout by remember { mutableStateOf<Workout?>(null) }
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
@@ -92,6 +103,8 @@ fun WorkoutScreen(
             textSecondary = textSecondary
         )
     }
+
+    // ✅ ELIMINADO: Bottom sheet de recovery details (ya no se usa)
 
     Scaffold(containerColor = bg) { innerPadding ->
         Column(
@@ -130,12 +143,15 @@ fun WorkoutScreen(
             RecoverySection(
                 textPrimary = textPrimary,
                 textSecondary = textSecondary,
-                accent = accent
+                accent = accent,
+                topItems = recoveryTop,
+
+                // ✅ CAMBIO: ahora navega a otra pantalla y le pasa la lista
+                onDetails = { onRecoveryDetailsClick(recoveryAll) }
             )
 
             Spacer(Modifier.height(20.dp))
 
-            // ✅ Mini historial (últimos 3) + mismo popup de historial
             MyWorkoutsSection(
                 textPrimary = textPrimary,
                 textSecondary = textSecondary,
@@ -154,7 +170,7 @@ fun WorkoutScreen(
 }
 
 /* ============================================
-   FEATURE GRID (igual que tu screen)
+   FEATURE GRID
    ============================================ */
 
 private data class FeatureItem(
@@ -176,7 +192,7 @@ private fun FeatureGrid(
 ) {
     val items = listOf(
         FeatureItem("Explorar", "Rutinas y programas", Icons.Filled.Search),
-        FeatureItem("Coach IA", "Plan inteligente", Icons.Outlined.AutoAwesome),
+        FeatureItem("Coach AI", "Plan inteligente", Icons.Outlined.AutoAwesome),
         FeatureItem("Historial", "Tus entrenamientos", Icons.Filled.History),
         FeatureItem("Progreso", "Evolución y stats", Icons.Filled.BarChart),
     )
@@ -323,14 +339,16 @@ private fun FeatureButton(
 }
 
 /* ============================================
-   RECOVERY (dejé tu versión simple)
+   RECOVERY SECTION (top 2)
    ============================================ */
 
 @Composable
 private fun RecoverySection(
     textPrimary: Color,
     textSecondary: Color,
-    accent: Color
+    accent: Color,
+    topItems: List<MuscleRecoveryItem>,
+    onDetails: () -> Unit
 ) {
     GlassCard(glow = true) {
         Row(
@@ -339,30 +357,46 @@ private fun RecoverySection(
             verticalAlignment = Alignment.CenterVertically
         ) {
             Text("Recuperación muscular", color = textPrimary, fontSize = 18.sp, fontWeight = FontWeight.Bold)
-            TextButton(onClick = { /* TODO */ }) {
+            TextButton(onClick = onDetails) {
                 Text("Detalles", color = accent, fontSize = 14.sp)
             }
         }
 
-        Text("Estimado en base a tus entrenamientos", color = textSecondary, fontSize = 12.sp)
+        Text("Según tu plan + tu historial", color = textSecondary, fontSize = 12.sp)
         Spacer(Modifier.height(12.dp))
 
-        // Placeholder
-        val muscles = remember {
-            listOf(
-                "Abductores" to 100,
-                "Abdominales" to 100,
-            )
+        if (topItems.isEmpty()) {
+            Surface(
+                shape = RoundedCornerShape(18.dp),
+                color = Color.White.copy(alpha = 0.04f),
+                border = BorderStroke(1.dp, Color.White.copy(alpha = 0.06f)),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(
+                    Modifier.padding(14.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Text("Todavía no hay datos", color = textPrimary, fontWeight = FontWeight.SemiBold)
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        "Cargá entrenamientos y un plan semanal para estimar recuperación por músculo.",
+                        color = textSecondary,
+                        fontSize = 12.sp,
+                        textAlign = TextAlign.Center
+                    )
+                }
+            }
+            return@GlassCard
         }
 
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            muscles.forEach { (name, percent) ->
+            topItems.forEach { item ->
                 RecoveryMuscleCard(
-                    name = name,
-                    percent = percent,
+                    name = item.name,
+                    percent = item.percent,
                     accent = accent,
                     textPrimary = textPrimary,
                     textSecondary = textSecondary,
@@ -380,10 +414,10 @@ private fun muscleGroupFor(name: String): MuscleGroup {
         .replace("á", "a").replace("é", "e").replace("í", "i")
         .replace("ó", "o").replace("ú", "u")
     return when (n) {
-        "cuadriceps", "isquiotibiales", "pantorrillas", "gemelos",
+        "cuadriceps", "isquiotibiales", "femorales", "gemelos",
         "gluteos", "aductores", "abductores", "piernas" -> MuscleGroup.LEG
         "biceps", "triceps", "antebrazos", "hombros", "deltoides" -> MuscleGroup.ARM
-        "pecho", "espalda", "abdominales", "abs", "lumbares", "trapecios", "core" -> MuscleGroup.TORSO
+        "pecho", "espalda", "abdominales", "abdomen", "abs", "lumbares", "trapecios", "core" -> MuscleGroup.TORSO
         else -> MuscleGroup.OTHER
     }
 }
@@ -469,7 +503,7 @@ private fun RecoveryMuscleCard(
 }
 
 /* ============================================
-   ✅ MIS ENTRENAMIENTOS: últimos 3 + detalles sheet
+   MINI HISTORIAL + DETAILS SHEET
    ============================================ */
 
 @Composable
@@ -574,7 +608,6 @@ private fun WorkoutMiniRow(
     textPrimary: Color,
     textSecondary: Color
 ) {
-    // ✅ Mostramos nombre real (title/type) arriba
     val title = (workout.type?.takeIf { it.isNotBlank() } ?: workout.title).ifBlank { "Entrenamiento" }
 
     val musclesText = workout.muscles
@@ -661,7 +694,8 @@ private fun WorkoutMiniRow(
 }
 
 /* ============================================
-   ✅ BOTTOM SHEET COPIADO 1:1 DE HISTORIAL
+   WORKOUT DETAILS BOTTOM SHEET
+   (igual al tuyo)
    ============================================ */
 
 @Composable
@@ -677,7 +711,7 @@ private fun WorkoutDetailsBottomSheet(
     textSecondary: Color
 ) {
     val fmtDay = remember { SimpleDateFormat("dd MMM yyyy", Locale("es", "AR")) }
-    val ts = workout.timestampMillis ?: workout.createdAt ?: 0L
+    val ts = workout.timestampMillis ?: workout.createdAt ?: workout.updatedAt ?: 0L
     val dateText = remember(ts) { if (ts == 0L) "—" else fmtDay.format(Date(ts)) }
 
     val title = (workout.type?.takeIf { it.isNotBlank() } ?: workout.title)

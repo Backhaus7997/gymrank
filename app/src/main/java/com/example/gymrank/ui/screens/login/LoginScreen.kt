@@ -1,5 +1,8 @@
 package com.example.gymrank.ui.screens.login
 
+import android.app.Activity
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -13,6 +16,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusDirection
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
@@ -26,6 +30,8 @@ import com.example.gymrank.ui.components.*
 import com.example.gymrank.ui.screens.signup.SignUpBottomSheet
 import com.example.gymrank.ui.theme.DesignTokens
 import com.example.gymrank.ui.theme.GymRankColors
+import com.google.android.gms.auth.api.signin.GoogleSignIn
+import com.google.android.gms.auth.api.signin.GoogleSignInOptions
 import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -48,6 +54,44 @@ fun LoginScreen(
     val snackbarHostState = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
 
+    // ✅ Context/Activity
+    val context = LocalContext.current
+    val activity = context as? Activity
+
+    // ✅ Google Sign-In client (igual que en signup)
+    val gso = remember {
+        GoogleSignInOptions.Builder(GoogleSignInOptions.DEFAULT_SIGN_IN)
+            .requestEmail()
+            .requestIdToken(context.getString(com.example.gymrank.R.string.default_web_client_id))
+            .build()
+    }
+
+    val googleClient = remember(activity) {
+        if (activity != null) GoogleSignIn.getClient(activity, gso) else null
+    }
+
+    val googleLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (result.resultCode != Activity.RESULT_OK) return@rememberLauncherForActivityResult
+
+        val data = result.data
+        val task = GoogleSignIn.getSignedInAccountFromIntent(data)
+
+        runCatching {
+            val account = task.getResult(Exception::class.java)
+            val idToken = account.idToken ?: error("Google idToken null (revisá default_web_client_id)")
+
+            // ✅ Login con Google (no signup)
+            viewModel.signInWithGoogle(idToken)
+
+        }.onFailure { e ->
+            scope.launch {
+                snackbarHostState.showSnackbar(e.message ?: "No se pudo iniciar sesión con Google")
+            }
+        }
+    }
+
     LaunchedEffect(uiState) {
         if (uiState is LoginUiState.Success) {
             val user = (uiState as LoginUiState.Success).user
@@ -57,9 +101,7 @@ fun LoginScreen(
     }
 
     LaunchedEffect(openSignUpOnStart) {
-        if (openSignUpOnStart) {
-            showSignUpSheet = true
-        }
+        if (openSignUpOnStart) showSignUpSheet = true
     }
 
     Scaffold(
@@ -120,12 +162,11 @@ fun LoginScreen(
 
                 Spacer(modifier = Modifier.height(DesignTokens.Spacing.xxl))
 
-                // ✅ Email Field (icono a la derecha)
                 AppTextField(
                     value = email,
                     onValueChange = { viewModel.onEmailChange(it) },
                     label = "Correo o usuario",
-                    trailingIcon = Icons.Filled.Email, // ✅ A LA DERECHA
+                    trailingIcon = Icons.Filled.Email,
                     isError = emailError != null,
                     errorMessage = emailError,
                     keyboardOptions = KeyboardOptions(
@@ -140,7 +181,6 @@ fun LoginScreen(
 
                 Spacer(modifier = Modifier.height(DesignTokens.Spacing.md))
 
-                // Password Field
                 AppTextField(
                     value = password,
                     onValueChange = { viewModel.onPasswordChange(it) },
@@ -165,12 +205,16 @@ fun LoginScreen(
 
                 TextButton(
                     onClick = {
-                        scope.launch { snackbarHostState.showSnackbar("Próximamente") }
+                        focusManager.clearFocus()
+                        viewModel.sendPasswordResetEmail { message ->
+                            scope.launch { snackbarHostState.showSnackbar(message) }
+                        }
                     },
-                    modifier = Modifier.align(Alignment.End)
+                    modifier = Modifier.align(Alignment.End),
+                    enabled = uiState !is LoginUiState.Loading
                 ) {
                     Text(
-                        text = "¿Te olvidaste la contraseña?",
+                        text = "¿Olvidaste tu contraseña?",
                         fontSize = 14.sp,
                         color = GymRankColors.PrimaryAccent,
                         style = MaterialTheme.typography.bodySmall
@@ -202,21 +246,23 @@ fun LoginScreen(
 
                 Spacer(modifier = Modifier.height(DesignTokens.Spacing.lg))
 
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(DesignTokens.Spacing.md)
-                ) {
+                // ✅ Solo Google, centrado (igual que signup)
+                Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
                     SocialButton(
                         text = "Google",
-                        onClick = { scope.launch { snackbarHostState.showSnackbar("Próximamente") } },
-                        modifier = Modifier.weight(1f),
-                        enabled = uiState !is LoginUiState.Loading
-                    )
+                        onClick = {
+                            if (uiState is LoginUiState.Loading) return@SocialButton
+                            if (activity == null || googleClient == null) {
+                                scope.launch { snackbarHostState.showSnackbar("No se pudo abrir Google Sign-In (Activity null)") }
+                                return@SocialButton
+                            }
 
-                    SocialButton(
-                        text = "Apple",
-                        onClick = { scope.launch { snackbarHostState.showSnackbar("Próximamente") } },
-                        modifier = Modifier.weight(1f),
+                            // ✅ Fuerza a que aparezca la UI (selector)
+                            googleClient.revokeAccess().addOnCompleteListener {
+                                googleLauncher.launch(googleClient.signInIntent)
+                            }
+                        },
+                        modifier = Modifier.widthIn(min = 220.dp),
                         enabled = uiState !is LoginUiState.Loading
                     )
                 }

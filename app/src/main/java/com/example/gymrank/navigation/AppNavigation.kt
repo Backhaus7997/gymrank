@@ -44,6 +44,17 @@ import com.example.gymrank.ui.screens.workout.subscreens.WorkoutHistoryScreen
 import com.example.gymrank.ui.screens.workout.subscreens.WorkoutProgressScreen
 import com.example.gymrank.ui.session.SessionViewModel
 import kotlinx.coroutines.launch
+import com.example.gymrank.ui.screens.workout.subscreens.RecoveryDetailsScreen
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import kotlinx.coroutines.launch
+import com.example.gymrank.ui.screens.workout.subscreens.ProgramDetailScreen
+import com.example.gymrank.data.repository.WorkoutRepositoryFirestoreImpl
+import com.example.gymrank.domain.model.Workout
+import com.example.gymrank.domain.model.WorkoutExercise
+import com.example.gymrank.ui.screens.workout.subscreens.CreateRoutineScreen
+import com.example.gymrank.ui.screens.feed.subscreens.WorkoutDetailScreen
+
 
 private const val NAV_FLOW_KEY = "nav_flow"
 private const val FLOW_LOGIN = "login"
@@ -275,7 +286,13 @@ fun AppNavigation(sessionViewModel: SessionViewModel) {
                 )
             }
 
-            composable("feed") { FeedScreen() }
+            composable("feed") {
+                FeedScreen(
+                    onOpenWorkout = { ownerUid, workoutId ->
+                        navController.navigate("workout/detail/$ownerUid/$workoutId")
+                    }
+                )
+            }
 
             composable("challenges") {
                 ChallengesScreen(
@@ -293,7 +310,8 @@ fun AppNavigation(sessionViewModel: SessionViewModel) {
                     onCoachClick = { navController.navigate("workout/coach_ai") },
                     onHistoryClick = { navController.navigate("workout/history") },
                     onProgressClick = { navController.navigate("workout/progress") },
-                    onCreateRoutineClick = { navController.navigate("workout/create_routine") }
+                    onCreateRoutineClick = { navController.navigate("workout/create_routine") },
+                    onRecoveryDetailsClick = { navController.navigate("workout/recovery") }
                 )
             }
 
@@ -356,7 +374,22 @@ fun AppNavigation(sessionViewModel: SessionViewModel) {
             composable("challenges/equipment") { EquipmentScreen(onBack = { navController.popBackStack() }) }
 
             // ✅ SUBSCREENS WORKOUT
-            composable("workout/explore") { ExploreScreen(onBack = { navController.popBackStack() }) }
+            composable("workout/explore") {
+                ExploreScreen(
+                    onBack = { navController.popBackStack() },
+                    onViewProgram = { templateId ->
+                        navController.navigate("workout/program_detail/$templateId")
+                    }
+                )
+            }
+            composable("workout/program_detail/{templateId}") { entry ->
+                val templateId = entry.arguments?.getString("templateId").orEmpty()
+                ProgramDetailScreen(
+                    templateId = templateId,
+                    onBack = { navController.popBackStack() }
+                )
+            }
+
             composable("workout/coach_ai") { CoachAiScreen(onBack = { navController.popBackStack() }) }
             composable("workout/history") {
                 WorkoutHistoryScreen(
@@ -366,37 +399,65 @@ fun AppNavigation(sessionViewModel: SessionViewModel) {
             }
             composable("workout/progress") { WorkoutProgressScreen(onBack = { navController.popBackStack() }) }
 
+            composable("workout/recovery") {
+                RecoveryDetailsScreen(
+                    onBack = { navController.popBackStack() }
+                )
+            }
+
             // ✅ CREATE ROUTINE
-            composable("workout/create_routine") {
-                val workoutRepo = remember { com.example.gymrank.data.repository.WorkoutRepositoryFirestoreImpl() }
+            composable(route = "workout/create_routine") {
+
+                val workoutRepo = remember { WorkoutRepositoryFirestoreImpl() }
+                val scope = rememberCoroutineScope()
 
                 CreateRoutineScreen(
                     onBack = { navController.popBackStack() },
-                    onCreate = { draft, muscles ->
-                        coroutineScope.launch {
-                            val workout = com.example.gymrank.domain.model.Workout(
-                                timestampMillis = System.currentTimeMillis(),
-                                durationMinutes = 60,
-                                type = draft.name,
-                                muscles = muscles,
-                                intensity = "Media",
-                                notes = draft.description.trim().ifBlank { null },
-                                exercises = draft.exercises.map { ex ->
-                                    com.example.gymrank.domain.model.WorkoutExercise(
-                                        name = ex.name,
-                                        sets = ex.sets,
-                                        reps = ex.reps,
-                                        usesBodyweight = ex.isBodyWeight,
-                                        weightKg = ex.weightKg?.toInt()
-                                    )
-                                }
-                            )
+                    onCreate = { draft, muscles, weekday ->
+
+                        val workout = Workout(
+                            durationMinutes = 60,
+                            type = draft.name,
+                            muscles = muscles,
+                            intensity = "Media",
+                            notes = draft.description.trim().ifBlank { null },
+
+                            // ✅ lo uso como “nombre” del entrenamiento guardado
+                            title = draft.name.trim(),
+                            description = draft.description.trim().ifBlank { null },
+
+                            // ✅ weekday adentro de cada exercise
+                            exercises = draft.exercises.map { ex ->
+                                WorkoutExercise(
+                                    name = ex.name,
+                                    sets = ex.sets,
+                                    reps = ex.reps,
+                                    usesBodyweight = ex.isBodyWeight,
+                                    weightKg = ex.weightKg?.toInt(),
+                                    weekday = weekday
+                                )
+                            }
+                        )
+
+                        scope.launch {
                             workoutRepo.saveWorkout(workout)
                             navController.popBackStack()
                         }
                     }
                 )
             }
+
+            composable("workout/detail/{ownerUid}/{workoutId}") { entry ->
+                val ownerUid = entry.arguments?.getString("ownerUid").orEmpty()
+                val workoutId = entry.arguments?.getString("workoutId").orEmpty()
+
+                WorkoutDetailScreen(
+                    ownerUid = ownerUid,
+                    workoutId = workoutId,
+                    onBack = { navController.popBackStack() }
+                )
+            }
+
         }
     }
 }

@@ -2,6 +2,7 @@ package com.example.gymrank.ui.screens.challenges.subscreens
 
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -22,7 +23,10 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.viewmodel.compose.viewModel
 import coil.compose.AsyncImage
+import com.example.gymrank.data.repository.ChallengeRepositoryFirestoreImpl
+import com.example.gymrank.domain.model.ChallengeTemplate
 import com.example.gymrank.ui.theme.DesignTokens
 import com.example.gymrank.ui.theme.GymRankColors
 
@@ -30,8 +34,9 @@ private data class ChallengeCard(
     val title: String,
     val subtitle: String,
     val level: String,
-    val days: String,
-    val imageUrl: String? = null // ✅ URL remota
+    val durationValue: Int,
+    val durationUnitShort: String, // "SEM" o "DÍAS"
+    val imageUrl: String? = null
 )
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -46,110 +51,24 @@ fun DiscoverScreen(
     val textSecondary = runCatching { DesignTokens.Colors.TextSecondary }.getOrElse { Color(0xFF8E8E93) }
     val accent = runCatching { GymRankColors.PrimaryAccent }.getOrElse { Color(0xFF2EF2A0) }
 
-    var tab by remember { mutableIntStateOf(0) }   // ✅ recomendado por el warning
+    var tab by remember { mutableIntStateOf(0) }
     var query by remember { mutableStateOf("") }
 
-    val items = remember {
-        listOf(
-            ChallengeCard(
-                title = "Los 50 diarios 🔥",
-                subtitle = "Completá el desafío de peso corporal de 50 días",
-                level = "Intermedio",
-                days = "50 DÍAS",
-                imageUrl = "https://images.unsplash.com/photo-1599058917212-d750089bc07e?w=800"
-            ),
-            ChallengeCard(
-                title = "Desafío 75 Hard",
-                subtitle = "Un desafío para fortalecer la mentalidad",
-                level = "Experto",
-                days = "75 DÍAS",
-                imageUrl = "https://images.unsplash.com/photo-1517963879433-6ad2b056d712?w=800"
-            ),
-            ChallengeCard(
-                title = "Quemá entre 500–750 kcal por día…",
-                subtitle = "Quemá 500–750 kcal diarias con pasos y cardio",
-                level = "Avanzado",
-                days = "30 DÍAS",
-                imageUrl = "https://images.unsplash.com/photo-1571019613454-1cb2f99b2d8b?w=800"
-            ),
-            ChallengeCard(
-                title = "10.000 pasos diarios ️",
-                subtitle = "Caminá al menos 10k pasos todos los días",
-                level = "Principiante",
-                days = "21 DÍAS",
-                imageUrl = "https://images.unsplash.com/photo-1506126613408-eca07ce68773?w=800"
-            ),
-            ChallengeCard(
-                title = "Cardio sin excusas",
-                subtitle = "30 minutos de cardio continuo por día",
-                level = "Intermedio",
-                days = "14 DÍAS",
-                imageUrl = "https://images.pexels.com/photos/4944973/pexels-photo-4944973.jpeg"
-            ),
-            ChallengeCard(
-                title = "Core de acero",
-                subtitle = "Entrená abdomen y core todos los días",
-                level = "Intermedio",
-                days = "30 DÍAS",
-                imageUrl = "https://images.pexels.com/photos/700392/pexels-photo-700392.jpeg"
-            ),
-            ChallengeCard(
-                title = "Fuerza total",
-                subtitle = "Levantá pesado 4 veces por semana",
-                level = "Avanzado",
-                days = "6 SEMANAS",
-                imageUrl = "https://images.pexels.com/photos/4853660/pexels-photo-4853660.jpeg"
-            ),
-            ChallengeCard(
-                title = "HIIT extremo",
-                subtitle = "Sesiones HIIT cortas pero intensas",
-                level = "Experto",
-                days = "14 DÍAS",
-                imageUrl = "https://images.unsplash.com/photo-1518611012118-696072aa579a?w=800"
-            ),
-            ChallengeCard(
-                title = "Sin azúcar",
-                subtitle = "Eliminá azúcar agregada de tu dieta",
-                level = "Intermedio",
-                days = "21 DÍAS",
-                imageUrl = "https://images.unsplash.com/photo-1506089676908-3592f7389d4d?w=800"
-            ),
-            ChallengeCard(
-                title = "Push-ups challenge",
-                subtitle = "Aumentá tus flexiones cada día",
-                level = "Principiante",
-                days = "30 DÍAS",
-                imageUrl = "https://images.pexels.com/photos/1199607/pexels-photo-1199607.jpeg"
-            ),
-            ChallengeCard(
-                title = "Early workout",
-                subtitle = "Entrená antes de las 9 AM",
-                level = "Intermedio",
-                days = "14 DÍAS",
-                imageUrl = "https://images.unsplash.com/photo-1500530855697-b586d89ba3ee?w=800"
-            ),
-            ChallengeCard(
-                title = "Running streak ️",
-                subtitle = "Corré al menos 3 km diarios",
-                level = "Avanzado",
-                days = "10 DÍAS",
-                imageUrl = "https://images.unsplash.com/photo-1552674605-db6ffd4facb5?w=800"
-            ),
-            ChallengeCard(
-                title = "Movilidad y estiramiento",
-                subtitle = "15 min diarios de movilidad",
-                level = "Principiante",
-                days = "21 DÍAS",
-                imageUrl = "https://images.unsplash.com/photo-1549576490-b0b4831ef60a?w=800"
-            )
+    // Repo + VM
+    val repo = remember { ChallengeRepositoryFirestoreImpl() }
+    val vm: DiscoverViewModel = viewModel(factory = DiscoverViewModelFactory(repo))
+    val state by vm.state.collectAsState()
 
-        )
+    LaunchedEffect(Unit) { vm.load() }
+
+    val cardsAll = remember(state.templates) {
+        state.templates.map { it.toUiCard() }
     }
 
-    // filtro por búsqueda
-    val filtered = remember(items, query) {
-        if (query.isBlank()) items
-        else items.filter {
+    val filtered = remember(cardsAll, query, tab) {
+        val base = if (tab == 0) cardsAll else emptyList()
+        if (query.isBlank()) base
+        else base.filter {
             it.title.contains(query, ignoreCase = true) ||
                     it.subtitle.contains(query, ignoreCase = true)
         }
@@ -164,7 +83,8 @@ fun DiscoverScreen(
                     IconButton(onClick = onBack) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = null, tint = textPrimary)
                     }
-                }
+                },
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = bg)
             )
         }
     ) { inner ->
@@ -175,7 +95,6 @@ fun DiscoverScreen(
                 .padding(horizontal = 16.dp, vertical = 10.dp)
         ) {
 
-            // Segmented: Descubrir / Mi biblioteca
             Row(
                 Modifier
                     .fillMaxWidth()
@@ -184,23 +103,12 @@ fun DiscoverScreen(
                     .padding(4.dp),
                 horizontalArrangement = Arrangement.spacedBy(6.dp)
             ) {
-                SegBtn(
-                    label = "Descubrir",
-                    selected = tab == 0,
-                    accent = accent,
-                    onClick = { tab = 0 }
-                )
-                SegBtn(
-                    label = "Mi biblioteca",
-                    selected = tab == 1,
-                    accent = accent,
-                    onClick = { tab = 1 }
-                )
+                SegBtn("Descubrir", tab == 0, accent) { tab = 0 }
+                SegBtn("Mi biblioteca", tab == 1, accent) { tab = 1 }
             }
 
             Spacer(Modifier.height(10.dp))
 
-            // Search bar
             OutlinedTextField(
                 value = query,
                 onValueChange = { query = it },
@@ -222,41 +130,103 @@ fun DiscoverScreen(
 
             Spacer(Modifier.height(10.dp))
             Text("Total: ${filtered.size}", color = textSecondary, fontSize = 13.sp)
-
             Spacer(Modifier.height(10.dp))
 
-            LazyColumn(
-                verticalArrangement = Arrangement.spacedBy(12.dp),
-                contentPadding = PaddingValues(bottom = 18.dp)
-            ) {
-                items(filtered) { c ->
-                    ChallengeListCard(
-                        card = c,
-                        surface = surface,
-                        textPrimary = textPrimary,
-                        textSecondary = textSecondary,
-                        accent = accent
-                    )
+            when {
+                state.loading -> {
+                    Box(
+                        Modifier
+                            .fillMaxWidth()
+                            .padding(top = 18.dp),
+                        contentAlignment = Alignment.Center
+                    ) { CircularProgressIndicator(color = accent) }
+                }
+
+                state.error != null -> {
+                    Surface(
+                        color = surface,
+                        shape = RoundedCornerShape(16.dp),
+                        border = BorderStroke(1.dp, accent.copy(alpha = 0.22f)),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Column(Modifier.padding(14.dp)) {
+                            Text("No se pudieron cargar los desafíos", color = textPrimary, fontWeight = FontWeight.SemiBold)
+                            Spacer(Modifier.height(6.dp))
+                            Text(state.error ?: "", color = textSecondary, fontSize = 13.sp)
+                            Spacer(Modifier.height(10.dp))
+                            Button(
+                                onClick = { vm.load() },
+                                colors = ButtonDefaults.buttonColors(containerColor = accent.copy(alpha = 0.20f))
+                            ) {
+                                Text("Reintentar", color = Color.White, fontWeight = FontWeight.SemiBold)
+                            }
+                        }
+                    }
+                }
+
+                else -> {
+                    LazyColumn(
+                        verticalArrangement = Arrangement.spacedBy(12.dp),
+                        contentPadding = PaddingValues(bottom = 18.dp)
+                    ) {
+                        items(filtered) { c ->
+                            ChallengeListCard(
+                                card = c,
+                                surface = surface,
+                                textPrimary = textPrimary,
+                                textSecondary = textSecondary,
+                                accent = accent
+                            )
+                        }
+                        item { Spacer(Modifier.height(80.dp)) }
+                    }
                 }
             }
         }
     }
 }
 
+private fun ChallengeTemplate.toUiCard(): ChallengeCard {
+    val (value, unitShort) = if (durationDays >= 7 && durationDays % 7 == 0) {
+        val weeks = (durationDays / 7).coerceAtLeast(1)
+        weeks to "SEM"
+    } else {
+        durationDays.coerceAtLeast(1) to "DÍAS"
+    }
+
+    return ChallengeCard(
+        title = title,
+        subtitle = subtitle,
+        level = level.ifBlank { "Principiante" },
+        durationValue = value,
+        durationUnitShort = unitShort,
+        imageUrl = imageUrl
+    )
+}
+
 @Composable
 private fun RowScope.SegBtn(label: String, selected: Boolean, accent: Color, onClick: () -> Unit) {
     val bg = if (selected) accent.copy(alpha = 0.18f) else Color.Transparent
     val border = if (selected) accent.copy(alpha = 0.55f) else Color.Transparent
+    val shape = RoundedCornerShape(12.dp)
 
     Surface(
-        modifier = Modifier.weight(1f),
-        shape = RoundedCornerShape(12.dp),
+        modifier = Modifier
+            .weight(1f)
+            .clip(shape)
+            .clickable { onClick() },
+        shape = shape,
         color = bg,
-        border = if (selected) BorderStroke(1.dp, border) else null,
-        onClick = onClick
+        border = if (selected) BorderStroke(1.dp, border) else null
     ) {
         Box(Modifier.padding(vertical = 10.dp), contentAlignment = Alignment.Center) {
-            Text(label, color = Color.White, fontWeight = FontWeight.SemiBold)
+            Text(
+                text = label,
+                color = Color.White,
+                fontWeight = FontWeight.SemiBold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
         }
     }
 }
@@ -276,17 +246,16 @@ private fun ChallengeListCard(
         modifier = Modifier.fillMaxWidth()
     ) {
         Row(
-            Modifier
+            modifier = Modifier
                 .fillMaxWidth()
                 .padding(12.dp),
             horizontalArrangement = Arrangement.spacedBy(12.dp),
-            verticalAlignment = Alignment.CenterVertically
+            verticalAlignment = Alignment.Top
         ) {
-
-            // ✅ Miniatura: URL -> AsyncImage, si no hay -> placeholder
+            // Imagen izquierda
             Box(
                 Modifier
-                    .size(width = 128.dp, height = 82.dp)
+                    .size(width = 132.dp, height = 86.dp)
                     .clip(RoundedCornerShape(14.dp))
                     .background(
                         Brush.linearGradient(
@@ -316,29 +285,41 @@ private fun ChallengeListCard(
                 }
             }
 
-            Column(Modifier.weight(1f)) {
+            // Derecha
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .padding(top = 2.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
                 Text(
-                    card.title,
+                    text = card.title,
                     color = textPrimary,
                     fontWeight = FontWeight.SemiBold,
                     fontSize = 16.sp,
-                    maxLines = 2,
+                    maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
-                Spacer(Modifier.height(4.dp))
+
                 Text(
-                    card.subtitle,
+                    text = card.subtitle,
                     color = textSecondary,
                     fontSize = 13.sp,
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis
                 )
 
-                Spacer(Modifier.height(10.dp))
-
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                    ChipPill(text = card.level, accent = accent)
-                    ChipPill(text = card.days, accent = accent)
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    LevelPill(text = card.level, accent = accent)
+                    DurationCircle(
+                        value = card.durationValue,
+                        unitShort = card.durationUnitShort,
+                        accent = accent
+                    )
                 }
             }
         }
@@ -346,18 +327,56 @@ private fun ChallengeListCard(
 }
 
 @Composable
-private fun ChipPill(text: String, accent: Color) {
+private fun LevelPill(text: String, accent: Color) {
     Surface(
         shape = RoundedCornerShape(999.dp),
         color = accent.copy(alpha = 0.14f),
-        border = BorderStroke(1.dp, accent.copy(alpha = 0.30f))
+        border = BorderStroke(1.dp, accent.copy(alpha = 0.30f)),
+        modifier = Modifier
+            .heightIn(min = 32.dp)
+            .wrapContentWidth()
     ) {
         Text(
             text = text,
             color = Color.White,
             fontSize = 12.sp,
-            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
-            fontWeight = FontWeight.SemiBold
+            fontWeight = FontWeight.SemiBold,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp)
         )
+    }
+}
+
+@Composable
+private fun DurationCircle(value: Int, unitShort: String, accent: Color) {
+    Surface(
+        shape = RoundedCornerShape(999.dp),
+        color = Color.Transparent,
+        border = BorderStroke(1.dp, accent.copy(alpha = 0.40f)),
+        modifier = Modifier.size(56.dp)
+    ) {
+        Column(
+            modifier = Modifier.fillMaxSize(),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center
+        ) {
+            Text(
+                text = value.toString(),
+                color = Color.White,
+                fontSize = 14.sp,
+                fontWeight = FontWeight.ExtraBold,
+                maxLines = 1
+            )
+            Text(
+                text = unitShort, // "SEM" / "DÍAS"
+                color = Color.White,
+                fontSize = 10.sp,
+                fontWeight = FontWeight.SemiBold,
+                maxLines = 1,
+                softWrap = false,
+                overflow = TextOverflow.Clip
+            )
+        }
     }
 }

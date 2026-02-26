@@ -376,7 +376,7 @@ private fun availableExercisesFor(selectedMuscles: Set<String>): List<String> {
 @Composable
 fun CreateRoutineScreen(
     onBack: () -> Unit,
-    onCreate: (RoutineDraft, List<String>) -> Unit
+    onCreate: (RoutineDraft, List<String>, Int) -> Unit
 ) {
     val bg = runCatching { DesignTokens.Colors.BackgroundBase }.getOrElse { Color(0xFF000000) }
     val surface = runCatching { DesignTokens.Colors.SurfaceElevated }.getOrElse { Color(0xFF101010) }
@@ -387,6 +387,14 @@ fun CreateRoutineScreen(
 
     val nameFocusRequester = remember { FocusRequester() }
     val keyboard = LocalSoftwareKeyboardController.current
+
+    // =========================================
+    // ✅ Día de entrenamiento (igual que Home)
+    // =========================================
+    val dayLabelsShort = remember { listOf("L", "M", "M", "J", "V", "S", "D") }
+    val todayIndex = remember { todayIndexMondayFirst() } // 0..6 (Lunes..Domingo)
+    var selectedDayIndex by remember { mutableStateOf(todayIndex) }
+    val selectedWeekday = selectedDayIndex + 1
 
     // ✅ FIX: state de lista para poder scrollear al top sin crashear
     val listState = rememberLazyListState()
@@ -496,31 +504,6 @@ fun CreateRoutineScreen(
             )
         },
 
-        // ✅ BOTÓN AGREGAR FLOTANTE
-        floatingActionButtonPosition = FabPosition.End,
-        floatingActionButton = {
-            ExtendedFloatingActionButton(
-                onClick = {
-                    exercises = exercises + RoutineExerciseDraft(
-                        name = "",
-                        sets = 3,
-                        reps = 10,
-                        weightKg = 0f,
-                        isBodyWeight = false
-                    )
-                    if (submitError != null) submitError = null
-                },
-                containerColor = accent,
-                contentColor = GymRankColors.PrimaryAccentText,
-                shape = RoundedCornerShape(999.dp),
-                modifier = Modifier.padding(bottom = 84.dp)
-            ) {
-                Icon(Icons.Filled.Add, contentDescription = null)
-                Spacer(Modifier.width(8.dp))
-                Text("Agregar ejercicio", fontWeight = FontWeight.ExtraBold)
-            }
-        },
-
         bottomBar = {
             Box(
                 modifier = Modifier
@@ -536,70 +519,106 @@ fun CreateRoutineScreen(
                     )
                     .padding(horizontal = 16.dp, vertical = 14.dp)
             ) {
-                val glow = Brush.verticalGradient(
-                    listOf(
-                        accent.copy(alpha = 0.22f),
-                        Color.Transparent
-                    )
-                )
-
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(16.dp))
-                        .background(glow)
-                        .padding(1.dp)
-                        .clip(RoundedCornerShape(16.dp))
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
+
+                    // ✅ Botón fijo "Agregar ejercicio" (como tu 2da foto)
                     Button(
                         onClick = {
-                            if (!validate()) {
-                                // ✅ FIX: en vez de crashear, scrollea y enfoca
-                                if (nameError != null) {
-                                    shouldScrollTop = true
-                                    shouldFocusName = true
-                                } else {
-                                    // error por ejercicios -> al menos lo llevamos arriba
-                                    shouldScrollTop = true
-                                }
-                                return@Button
-                            }
-
-                            val cleaned = RoutineDraft(
-                                name = routineName.trim(),
-                                description = routineDescription.trim(),
-                                exercises = exercises
-                                    .filter { it.name.trim().isNotEmpty() }
-                                    .map {
-                                        it.copy(
-                                            name = it.name.trim(),
-                                            sets = max(1, it.sets),
-                                            reps = max(1, it.reps),
-                                            weightKg = if (it.isBodyWeight) null else (it.weightKg ?: 0f)
-                                        )
-                                    }
+                            exercises = exercises + RoutineExerciseDraft(
+                                name = "",
+                                sets = 3,
+                                reps = 10,
+                                weightKg = 0f,
+                                isBodyWeight = false
                             )
-
-                            onCreate(cleaned, musclesSelected.toList())
+                            if (submitError != null) submitError = null
                         },
                         shape = RoundedCornerShape(16.dp),
-                        colors = ButtonDefaults.buttonColors(containerColor = accent),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = surface,
+                            contentColor = accent
+                        ),
+                        border = BorderStroke(1.dp, accent.copy(alpha = 0.28f)),
                         modifier = Modifier
                             .fillMaxWidth()
                             .height(54.dp)
                     ) {
-                        Icon(
-                            imageVector = Icons.Filled.FitnessCenter,
-                            contentDescription = null,
-                            tint = GymRankColors.PrimaryAccentText
-                        )
+                        Icon(Icons.Filled.Add, contentDescription = null, tint = accent)
                         Spacer(Modifier.width(10.dp))
                         Text(
-                            text = "GUARDAR ENTRENAMIENTO",
-                            color = GymRankColors.PrimaryAccentText,
+                            text = "Agregar ejercicio",
                             fontWeight = FontWeight.ExtraBold,
-                            letterSpacing = 1.2.sp
+                            color = accent
                         )
+                    }
+
+                    // ✅ Botón Guardar (tu implementación, igual)
+                    val glow = Brush.verticalGradient(
+                        listOf(
+                            accent.copy(alpha = 0.22f),
+                            Color.Transparent
+                        )
+                    )
+
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(16.dp))
+                            .background(glow)
+                            .padding(1.dp)
+                            .clip(RoundedCornerShape(16.dp))
+                    ) {
+                        Button(
+                            onClick = {
+                                if (!validate()) {
+                                    if (nameError != null) {
+                                        shouldScrollTop = true
+                                        shouldFocusName = true
+                                    } else {
+                                        shouldScrollTop = true
+                                    }
+                                    return@Button
+                                }
+
+                                val cleaned = RoutineDraft(
+                                    name = routineName.trim(),
+                                    description = routineDescription.trim(),
+                                    exercises = exercises
+                                        .filter { it.name.trim().isNotEmpty() }
+                                        .map {
+                                            it.copy(
+                                                name = it.name.trim(),
+                                                sets = max(1, it.sets),
+                                                reps = max(1, it.reps),
+                                                weightKg = if (it.isBodyWeight) null else (it.weightKg ?: 0f)
+                                            )
+                                        }
+                                )
+
+                                onCreate(cleaned, musclesSelected.toList(), selectedWeekday)
+                            },
+                            shape = RoundedCornerShape(16.dp),
+                            colors = ButtonDefaults.buttonColors(containerColor = accent),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(54.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Filled.FitnessCenter,
+                                contentDescription = null,
+                                tint = GymRankColors.PrimaryAccentText
+                            )
+                            Spacer(Modifier.width(10.dp))
+                            Text(
+                                text = "GUARDAR ENTRENAMIENTO",
+                                color = GymRankColors.PrimaryAccentText,
+                                fontWeight = FontWeight.ExtraBold,
+                                letterSpacing = 1.2.sp
+                            )
+                        }
                     }
                 }
             }
@@ -612,7 +631,9 @@ fun CreateRoutineScreen(
                 .padding(inner)
                 .padding(horizontal = 16.dp, vertical = 12.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp),
-            contentPadding = PaddingValues(bottom = 120.dp)
+            contentPadding = PaddingValues(bottom = 170.dp)
+
+
         ) {
 
             // ----------------------------
@@ -663,6 +684,43 @@ fun CreateRoutineScreen(
                                 color = GymRankColors.Error,
                                 style = MaterialTheme.typography.bodySmall
                             )
+                        }
+                    }
+                }
+            }
+
+            // ----------------------------
+            // DÍA DE ENTRENAMIENTO
+            // ----------------------------
+            item {
+                GlassCard {
+                    Column(Modifier.fillMaxWidth()) {
+                        Text(
+                            text = "Día de entrenamiento",
+                            color = textPrimary,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 16.sp
+                        )
+
+                        Spacer(Modifier.height(12.dp))
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            dayLabelsShort.forEachIndexed { idx, label ->
+                                val isToday = idx == todayIndex
+                                val isSelected = idx == selectedDayIndex
+
+                                DayPillSelectable(
+                                    day = label,
+                                    isToday = isToday,
+                                    isSelected = isSelected,
+                                    accent = accent,
+                                    onClick = { selectedDayIndex = idx }
+                                )
+                            }
                         }
                     }
                 }
@@ -1284,5 +1342,58 @@ private fun ExerciseDropdownField(
                 )
             }
         }
+    }
+}
+
+@Composable
+private fun DayPillSelectable(
+    day: String,
+    isToday: Boolean,
+    isSelected: Boolean,
+    accent: Color,
+    onClick: () -> Unit
+) {
+    val bg = when {
+        isSelected -> accent.copy(alpha = 0.18f)
+        else -> DesignTokens.Colors.SurfaceElevated
+    }
+
+    val stroke = when {
+        isSelected -> accent.copy(alpha = 0.85f)
+        isToday -> accent.copy(alpha = 0.45f)
+        else -> DesignTokens.Colors.SurfaceInputs
+    }
+
+    val txt = when {
+        isSelected -> accent
+        else -> DesignTokens.Colors.TextPrimary
+    }
+
+    Box(
+        modifier = Modifier
+            .height(44.dp)
+            .width(48.dp)
+            .clip(RoundedCornerShape(14.dp))
+            .background(bg)
+            .border(1.dp, stroke, RoundedCornerShape(14.dp))
+            .clickable { onClick() },
+        contentAlignment = Alignment.Center
+    ) {
+        Text(text = day, color = txt, fontWeight = FontWeight.SemiBold)
+    }
+}
+
+private fun todayIndexMondayFirst(): Int {
+    val cal = java.util.Calendar.getInstance(java.util.Locale.getDefault())
+    val dow = cal.get(java.util.Calendar.DAY_OF_WEEK)
+    return when (dow) {
+        java.util.Calendar.MONDAY -> 0
+        java.util.Calendar.TUESDAY -> 1
+        java.util.Calendar.WEDNESDAY -> 2
+        java.util.Calendar.THURSDAY -> 3
+        java.util.Calendar.FRIDAY -> 4
+        java.util.Calendar.SATURDAY -> 5
+        java.util.Calendar.SUNDAY -> 6
+        else -> 0
     }
 }
