@@ -2,6 +2,7 @@ package com.example.gymrank.data.repository
 
 import com.example.gymrank.ui.screens.feed.ExerciseSummary
 import com.example.gymrank.ui.screens.feed.FeedPost
+import com.example.gymrank.ui.screens.feed.FeedWorkoutItem
 import com.google.firebase.Timestamp
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.firestore.FieldValue
@@ -43,7 +44,7 @@ class FeedRepositoryFirestoreImpl(
         val timestampMillis: Long? = null
     )
 
-    // ✅ NUEVO: Friend Request UI model
+    // ✅ Friend Requests
     data class FriendRequestDoc(
         val fromUid: String = "",
         val toUid: String = "",
@@ -66,11 +67,13 @@ class FeedRepositoryFirestoreImpl(
 
     private fun now() = System.currentTimeMillis()
 
+    // ✅ ESTE ES EL FIX DEL ERROR "Field 'createdAt' is not a java.lang.Number"
     private fun createdAtMillis(v: Any?): Long? = when (v) {
         is Timestamp -> v.toDate().time
         is Long -> v
         is Double -> v.toLong()
         is Int -> v.toLong()
+        is String -> v.toLongOrNull()
         else -> null
     }
 
@@ -94,14 +97,13 @@ class FeedRepositoryFirestoreImpl(
     private fun requestId(fromUid: String, toUid: String) = "${fromUid}_${toUid}"
 
     // =========================
-    // AMIGOS (igual que hoy)
+    // AMIGOS
     // =========================
 
     suspend fun removeFriend(friendUid: String) {
         val myUid = auth.currentUser?.uid ?: return
         if (friendUid == myUid) return
 
-        // borro ambos lados si querés; por ahora mantenemos como lo tenías (solo mi lado)
         db.collection("users")
             .document(myUid)
             .collection("friends")
@@ -120,21 +122,15 @@ class FeedRepositoryFirestoreImpl(
         return snap.documents.map { it.id }
     }
 
-    // ✅ compat: esto antes agregaba directo, ahora ENVIAR SOLICITUD
+    // ✅ compat: esto antes agregaba directo, ahora ENVÍA SOLICITUD
     suspend fun addFriend(friendUid: String) {
         sendFriendRequest(friendUid)
     }
 
     // =========================
-    // ✅ NUEVO: SOLICITUDES
+    // ✅ SOLICITUDES
     // =========================
 
-    /**
-     * Enviar solicitud:
-     * - si ya son amigos -> no hace nada
-     * - si existe request pendente (en cualquier dirección) -> no duplica
-     * - requestId = from_to
-     */
     suspend fun sendFriendRequest(toUid: String) {
         val fromUid = auth.currentUser?.uid ?: return
         if (toUid.isBlank() || fromUid == toUid) return
@@ -149,7 +145,7 @@ class FeedRepositoryFirestoreImpl(
             .exists()
         if (alreadyFriend) return
 
-        // 2) Si ya hay pending entrante (to->from), no creo otra: el usuario debería aceptar esa.
+        // 2) Si ya hay pending entrante (to->from), no crear otra
         val incomingId = requestId(toUid, fromUid)
         val incomingSnap = db.collection("friend_requests").document(incomingId).get().await()
         val incomingStatus = incomingSnap.getString("status")?.lowercase()
@@ -162,7 +158,6 @@ class FeedRepositoryFirestoreImpl(
         val existing = ref.get().await()
         val existingStatus = existing.getString("status")?.lowercase()
 
-        // si ya está pending, listo
         if (existing.exists() && existingStatus == "pending") return
 
         val payload = hashMapOf(
@@ -172,7 +167,6 @@ class FeedRepositoryFirestoreImpl(
             "updatedAt" to FieldValue.serverTimestamp()
         )
 
-        // si es nuevo, setear createdAt
         if (!existing.exists()) {
             payload["createdAt"] = FieldValue.serverTimestamp()
         }
@@ -201,11 +195,6 @@ class FeedRepositoryFirestoreImpl(
         ).await()
     }
 
-    /**
-     * Aceptar solicitud entrante (fromUid -> me):
-     * - marca request accepted
-     * - crea friends en ambos users
-     */
     suspend fun acceptFriendRequest(fromUid: String) {
         val myUid = auth.currentUser?.uid ?: return
         if (fromUid.isBlank() || fromUid == myUid) return
@@ -220,7 +209,6 @@ class FeedRepositoryFirestoreImpl(
             val status = snap.getString("status")?.lowercase()
             if (status != "pending") return@runTransaction null
 
-            // 1) set accepted
             tx.set(
                 reqRef,
                 mapOf(
@@ -230,7 +218,6 @@ class FeedRepositoryFirestoreImpl(
                 com.google.firebase.firestore.SetOptions.merge()
             )
 
-            // 2) friends ambos lados
             val myFriendRef = db.collection("users").document(myUid)
                 .collection("friends").document(fromUid)
 
@@ -265,7 +252,6 @@ class FeedRepositoryFirestoreImpl(
         ).await()
     }
 
-    // ✅ NUEVO: badge count en Home (pendientes entrantes)
     fun observeIncomingPendingRequestsCount(): Flow<Int> = callbackFlow {
         val uid = auth.currentUser?.uid.orEmpty()
         if (uid.isBlank()) {
@@ -284,7 +270,6 @@ class FeedRepositoryFirestoreImpl(
         awaitClose { reg.remove() }
     }
 
-    // ✅ NUEVO: lista de solicitudes entrantes
     fun observeIncomingPendingRequests(): Flow<List<FriendRequestItem>> = callbackFlow {
         val uid = auth.currentUser?.uid.orEmpty()
         if (uid.isBlank()) {
@@ -297,10 +282,8 @@ class FeedRepositoryFirestoreImpl(
             .whereEqualTo("toUid", uid)
             .whereEqualTo("status", "pending")
             .addSnapshotListener { snap, _ ->
-                // devolvemos ids, luego el screen resuelve user data
                 val docs = snap?.documents.orEmpty()
 
-                // Emitimos con info mínima; el Screen completa username/avatar.
                 val basic = docs.map { d ->
                     val r = d.toObject(FriendRequestDoc::class.java) ?: FriendRequestDoc()
                     FriendRequestItem(
@@ -310,7 +293,7 @@ class FeedRepositoryFirestoreImpl(
                         fromAvatarUrl = "",
                         createdAtLabel = timeLabel(createdAtMillis(r.createdAt))
                     )
-                }.sortedByDescending { it.createdAtLabel } // no es perfecto, pero sirve
+                }
 
                 trySend(basic)
             }
@@ -318,7 +301,6 @@ class FeedRepositoryFirestoreImpl(
         awaitClose { reg.remove() }
     }
 
-    // ✅ NUEVO: helper para armar UI completa (username/avatar) a partir de fromUid
     suspend fun getUserMini(uid: String): Pair<String, String> {
         val snap = FirebaseFirestore.getInstance()
             .collection("users")
@@ -365,8 +347,52 @@ class FeedRepositoryFirestoreImpl(
         else -> 10
     }
 
+    // =========================
+    // ✅ NUEVO: últimos entrenos por usuario (para expand en Feed)
+    // =========================
+    suspend fun getRecentWorkoutsForUser(ownerUid: String, limit: Long = 5): List<FeedWorkoutItem> {
+        if (ownerUid.isBlank()) return emptyList()
+
+        val ws = db.collection("users")
+            .document(ownerUid)
+            .collection("workouts")
+            .orderBy("createdAt", Query.Direction.DESCENDING)
+            .limit(limit)
+            .get()
+            .await()
+
+        return ws.documents.mapNotNull { doc ->
+            val w = doc.toObject(WorkoutDoc::class.java) ?: return@mapNotNull null
+            val createdMs = createdAtMillis(w.createdAt)
+
+            val exercises = w.exercises.mapNotNull { m ->
+                val name = (m["name"] as? String).orEmpty()
+                if (name.isBlank()) return@mapNotNull null
+                ExerciseSummary(
+                    name = name,
+                    reps = (m["reps"] as? Number)?.toInt() ?: 0,
+                    weightKg = (m["weightKg"] as? Number)?.toFloat(),
+                    isBodyWeight = (m["usesBodyweight"] as? Boolean) == true
+                )
+            }
+
+            FeedWorkoutItem(
+                id = doc.id,
+                title = w.title,
+                durationMinutes = w.durationMinutes?.toInt(),
+                intensity = w.intensity,
+                type = w.type,
+                muscles = w.muscles,
+                description = w.description,
+                notes = w.notes,
+                timestampLabel = timeLabel(createdMs),
+                exercises = exercises
+            )
+        }
+    }
+
     /**
-     * FEED PÚBLICO (igual que lo tenías)
+     * FEED PÚBLICO
      */
     suspend fun getPublicFeed(maxUsers: Int = 50, perUserLimit: Long = 5): List<FeedPost> {
         val myUid = auth.currentUser?.uid ?: ""
@@ -430,7 +456,7 @@ class FeedRepositoryFirestoreImpl(
     }
 
     /**
-     * FEED AMIGOS (igual que lo tenías)
+     * FEED AMIGOS
      */
     suspend fun getFriendsFeed(friendUids: List<String>, perFriendLimit: Long = 10): List<FeedPost> {
         if (friendUids.isEmpty()) return emptyList()

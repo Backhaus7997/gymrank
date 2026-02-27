@@ -9,9 +9,9 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Shield
-import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Shield
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -37,7 +37,7 @@ data class ExerciseSummary(
 )
 
 data class FeedPost(
-    val id: String,
+    val id: String,              // ✅ ESTE ES workoutId del último entreno
     val ownerUid: String,
     val userName: String,
     val avatarUrl: String,
@@ -56,12 +56,12 @@ enum class FeedTab { FRIENDS, PUBLIC }
 @Composable
 fun FeedScreen(
     vm: FeedViewModel = androidx.lifecycle.viewmodel.compose.viewModel(),
-    onOpenUserWorkouts: (ownerUid: String) -> Unit = {} // ✅ abre “todos los entrenos” del usuario
+    onOpenWorkoutDetail: (ownerUid: String, workoutId: String) -> Unit = { _, _ -> }
 ) {
     var selectedTab by remember { mutableStateOf(FeedTab.PUBLIC) }
     val state by vm.state.collectAsState()
 
-    var searchQuery by remember { mutableStateOf("") } // ✅ Search solo filtra (en ambos tabs)
+    var searchQuery by remember { mutableStateOf("") } // Search solo filtra
 
     LaunchedEffect(Unit) { vm.load() }
 
@@ -86,10 +86,10 @@ fun FeedScreen(
 
         val rawPosts = if (selectedTab == FeedTab.PUBLIC) state.publicPosts else state.friendsPosts
 
-        // ✅ 1 sola card por usuario
+        // ✅ 1 sola card por usuario (el más nuevo)
         val groupedPosts = remember(rawPosts) { rawPosts.distinctBy { it.ownerUid } }
 
-        // ✅ filtro por username (search solo filtra)
+        // ✅ filtro por username
         val filteredPosts = remember(groupedPosts, searchQuery) {
             if (searchQuery.isBlank()) groupedPosts
             else groupedPosts.filter { it.userName.contains(searchQuery.trim(), ignoreCase = true) }
@@ -110,7 +110,6 @@ fun FeedScreen(
 
             if (filteredPosts.isEmpty()) {
                 item {
-                    // ✅ si está en amigos y no tiene amigos => empty específico
                     if (selectedTab == FeedTab.FRIENDS && state.friendsUids.isEmpty()) {
                         EmptyFriendsState()
                     } else {
@@ -122,10 +121,14 @@ fun FeedScreen(
                     FeedPostCard(
                         post = post,
                         canUnfollow = (selectedTab == FeedTab.FRIENDS),
-                        showAddButton = (selectedTab == FeedTab.PUBLIC), // ✅ SOLO en Público
-                        onAdd = { vm.addFriend(post.ownerUid) },          // ✅ envía solicitud
+                        showAddButton = (selectedTab == FeedTab.PUBLIC),
+                        onAdd = { vm.addFriend(post.ownerUid) },
                         onUnfollow = { vm.removeFriend(post.ownerUid) },
-                        onOpenUserWorkouts = { onOpenUserWorkouts(post.ownerUid) }
+
+                        // ✅ Ver más navega al detail
+                        onOpenWorkoutDetail = {
+                            onOpenWorkoutDetail(post.ownerUid, post.id)
+                        }
                     )
                 }
             }
@@ -295,7 +298,7 @@ private fun FeedPostCard(
     showAddButton: Boolean,
     onAdd: () -> Unit,
     onUnfollow: () -> Unit,
-    onOpenUserWorkouts: () -> Unit
+    onOpenWorkoutDetail: () -> Unit
 ) {
     GlassCard(glow = true) {
         Column(Modifier.fillMaxWidth()) {
@@ -422,7 +425,7 @@ private fun FeedPostCard(
                     "Ver mas →",
                     color = GymRankColors.PrimaryAccent,
                     fontWeight = FontWeight.Medium,
-                    modifier = Modifier.clickable { onOpenUserWorkouts() }
+                    modifier = Modifier.clickable { onOpenWorkoutDetail() }
                 )
 
                 Spacer(Modifier.height(10.dp))
@@ -463,14 +466,17 @@ private fun ExerciseRow(ex: ExerciseSummary) {
             .clip(RoundedCornerShape(12.dp))
             .background(DesignTokens.Colors.SurfaceElevated)
             .padding(horizontal = 12.dp, vertical = 10.dp),
-        horizontalArrangement = Arrangement.SpaceBetween
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
     ) {
         Text(ex.name, Modifier.weight(1f))
+
         val right = when {
             ex.isBodyWeight -> "Peso corporal"
             ex.weightKg == null -> "${ex.reps}"
             else -> "${ex.reps} · ${ex.weightKg.toInt()} kg"
         }
+
         Text(right, color = DesignTokens.Colors.TextSecondary)
     }
 }

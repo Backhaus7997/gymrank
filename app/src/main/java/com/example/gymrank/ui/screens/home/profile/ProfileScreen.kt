@@ -14,11 +14,17 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Groups
+import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Logout
+import androidx.compose.material.icons.filled.Public
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -50,6 +56,23 @@ fun ProfileScreen(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
 
+    val scrollState = rememberScrollState()
+
+    // ✅ Snackbar (mensaje profesional que se va solo)
+    val snackbarHostState = remember { SnackbarHostState() }
+
+    LaunchedEffect(ui.savedOk) {
+        if (ui.savedOk) {
+            snackbarHostState.showSnackbar(
+                message = "Cambios guardados",
+                duration = SnackbarDuration.Short
+            )
+        }
+    }
+
+    var showPrivacySheet by remember { mutableStateOf(false) }
+    val privacySheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+
     val pickImageLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent()
     ) { uri: Uri? ->
@@ -71,231 +94,475 @@ fun ProfileScreen(
         }
     }
 
-    val bg = Brush.verticalGradient(listOf(Color(0xFF0B0B0B), Color(0xFF000000)))
-
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(bg)
-            .padding(horizontal = 18.dp, vertical = 16.dp)
-    ) {
-        Surface(
-            modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(26.dp),
-            color = DesignTokens.Colors.SurfaceElevated,
-            tonalElevation = 0.dp,
-            shadowElevation = 10.dp
+    // ✅ BottomSheet con las 3 opciones (solo aparece al tocar la card)
+    if (showPrivacySheet) {
+        ModalBottomSheet(
+            onDismissRequest = { showPrivacySheet = false },
+            sheetState = privacySheetState,
+            containerColor = DesignTokens.Colors.SurfaceElevated
         ) {
-            Column(modifier = Modifier.padding(18.dp)) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .navigationBarsPadding()
+                    .padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Text(
+                    text = "Privacidad del perfil",
+                    color = DesignTokens.Colors.TextPrimary,
+                    fontWeight = FontWeight.SemiBold,
+                    fontSize = 16.sp
+                )
+                Text(
+                    text = "Esto define quién puede ver tus entrenamientos en el feed.",
+                    color = DesignTokens.Colors.TextSecondary,
+                    fontSize = 12.sp
+                )
 
-                // Header
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically
+                Spacer(Modifier.height(6.dp))
+
+                PrivacyOptionRow(
+                    title = "Público",
+                    subtitle = "Cualquiera puede ver tus entrenamientos.",
+                    selected = ui.feedVisibility.equals(VisibilityOptions.PUBLIC, ignoreCase = true),
+                    icon = Icons.Default.Public
                 ) {
-                    Text(
-                        text = "Perfil",
-                        color = DesignTokens.Colors.TextPrimary,
-                        fontSize = 22.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        modifier = Modifier.weight(1f)
-                    )
-                    IconButton(onClick = onClose) {
-                        Icon(Icons.Default.Close, contentDescription = "Cerrar", tint = DesignTokens.Colors.TextPrimary)
-                    }
+                    vm.onVisibilityChanged(VisibilityOptions.PUBLIC)
+                    showPrivacySheet = false
                 }
 
-                Spacer(Modifier.height(12.dp))
-
-                // Avatar + username + experience + cambiar foto
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically
+                PrivacyOptionRow(
+                    title = "Solo amigos",
+                    subtitle = "Solo tus amigos pueden ver tus entrenamientos.",
+                    selected = ui.feedVisibility.equals(VisibilityOptions.FRIENDS, ignoreCase = true),
+                    icon = Icons.Default.Groups
                 ) {
-                    Surface(
-                        modifier = Modifier.size(52.dp),
-                        shape = CircleShape,
-                        color = Color(0xFF232323),
-                        border = BorderStroke(1.dp, DesignTokens.Colors.SurfaceInputs)
+                    vm.onVisibilityChanged(VisibilityOptions.FRIENDS)
+                    showPrivacySheet = false
+                }
+
+                PrivacyOptionRow(
+                    title = "Privado",
+                    subtitle = "Nadie puede ver tus entrenamientos en el feed.",
+                    selected = ui.feedVisibility.equals(VisibilityOptions.PRIVATE, ignoreCase = true),
+                    icon = Icons.Default.Lock
+                ) {
+                    vm.onVisibilityChanged(VisibilityOptions.PRIVATE)
+                    showPrivacySheet = false
+                }
+
+                Spacer(Modifier.height(6.dp))
+            }
+        }
+    }
+
+    val bg = Brush.verticalGradient(listOf(Color(0xFF0B0B0B), Color(0xFF000000)))
+
+    // ✅ Scaffold para Snackbar + tu UI actual
+    Scaffold(
+        containerColor = Color.Transparent,
+        snackbarHost = {
+            SnackbarHost(hostState = snackbarHostState) { data ->
+                Snackbar(
+                    snackbarData = data,
+                    containerColor = DesignTokens.Colors.SurfaceElevated,
+                    contentColor = DesignTokens.Colors.TextPrimary,
+                    shape = RoundedCornerShape(14.dp)
+                )
+            }
+        }
+    ) { innerPadding ->
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(bg)
+                .padding(innerPadding)
+                .padding(horizontal = 18.dp, vertical = 16.dp)
+        ) {
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(26.dp),
+                color = DesignTokens.Colors.SurfaceElevated,
+                tonalElevation = 0.dp,
+                shadowElevation = 10.dp
+            ) {
+                // ✅ SCROLL REAL
+                Column(
+                    modifier = Modifier
+                        .verticalScroll(scrollState)
+                        .navigationBarsPadding()
+                        .padding(18.dp)
+                ) {
+
+                    // Header
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        val dataUrl = ui.photoBase64?.let { "data:image/jpeg;base64,$it" }
-                        if (!dataUrl.isNullOrBlank()) {
-                            AsyncImage(
-                                model = dataUrl,
-                                contentDescription = "Foto de perfil",
-                                modifier = Modifier.fillMaxSize().clip(CircleShape)
+                        Text(
+                            text = "Perfil",
+                            color = DesignTokens.Colors.TextPrimary,
+                            fontSize = 22.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            modifier = Modifier.weight(1f)
+                        )
+                        IconButton(onClick = onClose) {
+                            Icon(
+                                Icons.Default.Close,
+                                contentDescription = "Cerrar",
+                                tint = DesignTokens.Colors.TextPrimary
                             )
-                        } else {
-                            Box(Modifier.fillMaxSize())
                         }
                     }
 
-                    Spacer(Modifier.width(12.dp))
+                    Spacer(Modifier.height(12.dp))
 
-                    Column(Modifier.weight(1f)) {
-                        Text(
-                            text = ui.username.ifBlank { "usuario" },
-                            color = DesignTokens.Colors.TextPrimary,
-                            fontWeight = FontWeight.SemiBold,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                        Text(
-                            text = ui.experienceLabel,
-                            color = DesignTokens.Colors.TextSecondary,
-                            fontSize = 12.sp
-                        )
-                    }
-
-                    OutlinedButton(
-                        onClick = { pickImageLauncher.launch("image/*") },
-                        border = BorderStroke(1.dp, GymRankColors.PrimaryAccent.copy(alpha = 0.45f)),
-                        colors = ButtonDefaults.outlinedButtonColors(
-                            containerColor = GymRankColors.PrimaryAccent.copy(alpha = 0.10f),
-                            contentColor = GymRankColors.PrimaryAccent
-                        ),
-                        shape = RoundedCornerShape(999.dp),
-                        contentPadding = PaddingValues(horizontal = 14.dp, vertical = 10.dp)
-                    ) {
-                        Text("Cambiar foto", fontWeight = FontWeight.SemiBold)
-                    }
-                }
-
-                Spacer(Modifier.height(16.dp))
-
-                // Username (tu "Nombre")
-                Text("Nombre", color = DesignTokens.Colors.TextSecondary, fontSize = 12.sp)
-                Spacer(Modifier.height(6.dp))
-                DarkField(
-                    value = ui.username,
-                    onValueChange = vm::onUsernameChanged,
-                    placeholder = "Tu nombre"
-                )
-
-                Spacer(Modifier.height(12.dp))
-
-                // Experiencia
-                Text("Experiencia", color = DesignTokens.Colors.TextSecondary, fontSize = 12.sp)
-                Spacer(Modifier.height(6.dp))
-                DarkDropdown(
-                    value = ui.experienceLabel,
-                    options = ExperienceOptions.labels,
-                    onPick = { vm.onExperienceChanged(ExperienceOptions.toValue(it)) }
-                )
-
-                Spacer(Modifier.height(12.dp))
-
-                // Género
-                Text("Género", color = DesignTokens.Colors.TextSecondary, fontSize = 12.sp)
-                Spacer(Modifier.height(6.dp))
-                DarkDropdown(
-                    value = ui.genderLabel,
-                    options = GenderOptions.labels,
-                    onPick = { vm.onGenderChanged(GenderOptions.toValue(it)) }
-                )
-
-                Spacer(Modifier.height(12.dp))
-
-                // Visibilidad (feedVisibility en Firestore)
-                Text("Visibilidad", color = DesignTokens.Colors.TextSecondary, fontSize = 12.sp)
-                Spacer(Modifier.height(6.dp))
-                DarkDropdown(
-                    value = ui.visibilityLabel,
-                    options = VisibilityOptions.labels,
-                    onPick = { vm.onVisibilityChanged(VisibilityOptions.toValue(it)) }
-                )
-
-                Spacer(Modifier.height(16.dp))
-
-                // Guardar
-                Button(
-                    onClick = vm::save,
-                    enabled = !ui.isSaving,
-                    modifier = Modifier.fillMaxWidth().height(54.dp),
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = GymRankColors.PrimaryAccent,
-                        contentColor = Color.Black,
-                        disabledContainerColor = GymRankColors.PrimaryAccent.copy(alpha = 0.6f),
-                        disabledContentColor = Color.Black
-                    ),
-                    shape = RoundedCornerShape(999.dp)
-                ) {
-                    if (ui.isSaving) {
-                        CircularProgressIndicator(
-                            modifier = Modifier.size(18.dp),
-                            strokeWidth = 2.dp,
-                            color = Color.Black
-                        )
-                        Spacer(Modifier.width(10.dp))
-                        Text("GUARDANDO…", fontWeight = FontWeight.Black)
-                    } else {
-                        Text("GUARDAR CAMBIOS", fontWeight = FontWeight.Black)
-                    }
-                }
-
-                if (!ui.error.isNullOrBlank()) {
-                    Spacer(Modifier.height(10.dp))
-                    Text(ui.error ?: "", color = GymRankColors.Error, fontSize = 12.sp)
-                }
-                if (ui.savedOk) {
-                    Spacer(Modifier.height(10.dp))
-                    Text("Cambios guardados ✅", color = GymRankColors.PrimaryAccent, fontSize = 12.sp)
-                }
-
-                Spacer(Modifier.height(14.dp))
-
-                // Card solicitudes
-                Surface(
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(18.dp),
-                    color = DesignTokens.Colors.SurfaceElevated,
-                    border = BorderStroke(1.dp, DesignTokens.Colors.SurfaceInputs)
-                ) {
-                    Column(Modifier.padding(14.dp)) {
-                        Text("Solicitudes de amistad", color = DesignTokens.Colors.TextPrimary, fontWeight = FontWeight.SemiBold)
-                        Spacer(Modifier.height(4.dp))
-                        Text(
-                            ui.friendRequestsHint,
-                            color = DesignTokens.Colors.TextSecondary,
-                            fontSize = 12.sp
-                        )
-                        Spacer(Modifier.height(10.dp))
-                        OutlinedButton(
-                            onClick = onOpenFriendRequests,
-                            modifier = Modifier.fillMaxWidth(),
-                            shape = RoundedCornerShape(14.dp),
-                            border = BorderStroke(1.dp, DesignTokens.Colors.SurfaceInputs),
-                            colors = ButtonDefaults.outlinedButtonColors(
-                                containerColor = DesignTokens.Colors.SurfaceElevated,
-                                contentColor = DesignTokens.Colors.TextPrimary
-                            )
-                        ) { Text("Ver solicitudes") }
-                    }
-                }
-
-                Spacer(Modifier.height(10.dp))
-
-                // Card logout
-                Surface(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable(
-                            indication = null,
-                            interactionSource = remember { MutableInteractionSource() }
-                        ) { onLogout() },
-                    shape = RoundedCornerShape(18.dp),
-                    color = DesignTokens.Colors.SurfaceElevated,
-                    border = BorderStroke(1.dp, DesignTokens.Colors.SurfaceInputs)
-                ) {
+                    // Avatar + username + experience + cambiar foto
                     Row(
-                        modifier = Modifier.padding(16.dp),
+                        modifier = Modifier.fillMaxWidth(),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Icon(Icons.Default.Logout, contentDescription = null, tint = DesignTokens.Colors.TextPrimary)
-                        Spacer(Modifier.width(10.dp))
-                        Text("Cerrar sesión", color = DesignTokens.Colors.TextPrimary, fontWeight = FontWeight.SemiBold)
+                        Surface(
+                            modifier = Modifier.size(52.dp),
+                            shape = CircleShape,
+                            color = Color(0xFF232323),
+                            border = BorderStroke(1.dp, DesignTokens.Colors.SurfaceInputs)
+                        ) {
+                            val dataUrl = ui.photoBase64?.let { "data:image/jpeg;base64,$it" }
+                            if (!dataUrl.isNullOrBlank()) {
+                                AsyncImage(
+                                    model = dataUrl,
+                                    contentDescription = "Foto de perfil",
+                                    modifier = Modifier
+                                        .fillMaxSize()
+                                        .clip(CircleShape)
+                                )
+                            } else {
+                                Box(Modifier.fillMaxSize())
+                            }
+                        }
+
+                        Spacer(Modifier.width(12.dp))
+
+                        Column(Modifier.weight(1f)) {
+                            Text(
+                                text = ui.username.ifBlank { "usuario" },
+                                color = DesignTokens.Colors.TextPrimary,
+                                fontWeight = FontWeight.SemiBold,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            Text(
+                                text = ui.experienceLabel,
+                                color = DesignTokens.Colors.TextSecondary,
+                                fontSize = 12.sp
+                            )
+                        }
+
+                        OutlinedButton(
+                            onClick = { pickImageLauncher.launch("image/*") },
+                            border = BorderStroke(1.dp, GymRankColors.PrimaryAccent.copy(alpha = 0.45f)),
+                            colors = ButtonDefaults.outlinedButtonColors(
+                                containerColor = GymRankColors.PrimaryAccent.copy(alpha = 0.10f),
+                                contentColor = GymRankColors.PrimaryAccent
+                            ),
+                            shape = RoundedCornerShape(999.dp),
+                            contentPadding = PaddingValues(horizontal = 14.dp, vertical = 10.dp)
+                        ) {
+                            Text("Cambiar foto", fontWeight = FontWeight.SemiBold)
+                        }
                     }
+
+                    Spacer(Modifier.height(16.dp))
+
+                    // Nombre
+                    Text("Nombre", color = DesignTokens.Colors.TextSecondary, fontSize = 12.sp)
+                    Spacer(Modifier.height(6.dp))
+                    DarkField(
+                        value = ui.username,
+                        onValueChange = vm::onUsernameChanged,
+                        placeholder = "Tu nombre"
+                    )
+
+                    Spacer(Modifier.height(12.dp))
+
+                    // Experiencia
+                    Text("Experiencia", color = DesignTokens.Colors.TextSecondary, fontSize = 12.sp)
+                    Spacer(Modifier.height(6.dp))
+                    DarkDropdown(
+                        value = ui.experienceLabel,
+                        options = ExperienceOptions.labels,
+                        onPick = { vm.onExperienceChanged(ExperienceOptions.toValue(it)) }
+                    )
+
+                    Spacer(Modifier.height(12.dp))
+
+                    // Género
+                    Text("Género", color = DesignTokens.Colors.TextSecondary, fontSize = 12.sp)
+                    Spacer(Modifier.height(6.dp))
+                    DarkDropdown(
+                        value = ui.genderLabel,
+                        options = GenderOptions.labels,
+                        onPick = { vm.onGenderChanged(GenderOptions.toValue(it)) }
+                    )
+
+                    Spacer(Modifier.height(14.dp))
+
+                    // ✅ Privacidad del perfil (1 sola card como la foto)
+                    Text("Privacidad del perfil", color = DesignTokens.Colors.TextSecondary, fontSize = 12.sp)
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        text = "Esto define quién puede ver tus entrenamientos en el feed.",
+                        color = DesignTokens.Colors.TextSecondary,
+                        fontSize = 12.sp
+                    )
+                    Spacer(Modifier.height(10.dp))
+
+                    PrivacySummaryCard(
+                        currentValue = ui.feedVisibility,
+                        onClick = { showPrivacySheet = true }
+                    )
+
+                    Spacer(Modifier.height(16.dp))
+
+                    // Guardar
+                    Button(
+                        onClick = vm::save,
+                        enabled = !ui.isSaving,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(54.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = GymRankColors.PrimaryAccent,
+                            contentColor = Color.Black,
+                            disabledContainerColor = GymRankColors.PrimaryAccent.copy(alpha = 0.6f),
+                            disabledContentColor = Color.Black
+                        ),
+                        shape = RoundedCornerShape(999.dp)
+                    ) {
+                        if (ui.isSaving) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(18.dp),
+                                strokeWidth = 2.dp,
+                                color = Color.Black
+                            )
+                            Spacer(Modifier.width(10.dp))
+                            Text("GUARDANDO…", fontWeight = FontWeight.Black)
+                        } else {
+                            Text("GUARDAR CAMBIOS", fontWeight = FontWeight.Black)
+                        }
+                    }
+
+                    if (!ui.error.isNullOrBlank()) {
+                        Spacer(Modifier.height(10.dp))
+                        Text(ui.error ?: "", color = GymRankColors.Error, fontSize = 12.sp)
+                    }
+
+                    // ✅ Sacamos el texto viejo "Cambios guardados ✅" (ahora es Snackbar)
+
+                    Spacer(Modifier.height(14.dp))
+
+                    // Card solicitudes
+                    Surface(
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(18.dp),
+                        color = DesignTokens.Colors.SurfaceElevated,
+                        border = BorderStroke(1.dp, DesignTokens.Colors.SurfaceInputs)
+                    ) {
+                        Column(Modifier.padding(14.dp)) {
+                            Text(
+                                "Solicitudes de amistad",
+                                color = DesignTokens.Colors.TextPrimary,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                            Spacer(Modifier.height(4.dp))
+                            Text(
+                                ui.friendRequestsHint,
+                                color = DesignTokens.Colors.TextSecondary,
+                                fontSize = 12.sp
+                            )
+                            Spacer(Modifier.height(10.dp))
+                            OutlinedButton(
+                                onClick = onOpenFriendRequests,
+                                modifier = Modifier.fillMaxWidth(),
+                                shape = RoundedCornerShape(14.dp),
+                                border = BorderStroke(1.dp, DesignTokens.Colors.SurfaceInputs),
+                                colors = ButtonDefaults.outlinedButtonColors(
+                                    containerColor = DesignTokens.Colors.SurfaceElevated,
+                                    contentColor = DesignTokens.Colors.TextPrimary
+                                )
+                            ) { Text("Ver solicitudes") }
+                        }
+                    }
+
+                    Spacer(Modifier.height(10.dp))
+
+                    // Card logout
+                    Surface(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable(
+                                indication = null,
+                                interactionSource = remember { MutableInteractionSource() }
+                            ) { onLogout() },
+                        shape = RoundedCornerShape(18.dp),
+                        color = DesignTokens.Colors.SurfaceElevated,
+                        border = BorderStroke(1.dp, DesignTokens.Colors.SurfaceInputs)
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(16.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(
+                                Icons.Default.Logout,
+                                contentDescription = null,
+                                tint = DesignTokens.Colors.TextPrimary
+                            )
+                            Spacer(Modifier.width(10.dp))
+                            Text(
+                                "Cerrar sesión",
+                                color = DesignTokens.Colors.TextPrimary,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                        }
+                    }
+
+                    Spacer(Modifier.height(10.dp))
                 }
+            }
+        }
+    }
+}
+
+@Composable
+private fun PrivacySummaryCard(
+    currentValue: String,
+    onClick: () -> Unit
+) {
+    val (title, subtitle, icon) = when (currentValue.trim().uppercase()) {
+        VisibilityOptions.FRIENDS -> Triple(
+            "Solo amigos",
+            "Solo tus amigos pueden ver tus entrenamientos.",
+            Icons.Default.Groups
+        )
+        VisibilityOptions.PRIVATE -> Triple(
+            "Privado",
+            "Nadie puede ver tus entrenamientos en el feed.",
+            Icons.Default.Lock
+        )
+        else -> Triple(
+            "Público",
+            "Cualquiera puede ver tus entrenamientos.",
+            Icons.Default.Public
+        )
+    }
+
+    val shape = RoundedCornerShape(18.dp)
+
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(shape)
+            .clickable { onClick() }
+            .border(1.dp, DesignTokens.Colors.SurfaceInputs, shape),
+        shape = shape,
+        color = DesignTokens.Colors.SurfaceElevated
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 14.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Surface(
+                shape = RoundedCornerShape(14.dp),
+                color = Color(0xFF1F1F1F),
+                border = BorderStroke(1.dp, DesignTokens.Colors.SurfaceInputs)
+            ) {
+                Box(
+                    modifier = Modifier.size(38.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(icon, contentDescription = null, tint = GymRankColors.PrimaryAccent)
+                }
+            }
+
+            Spacer(Modifier.width(12.dp))
+
+            Column(Modifier.weight(1f)) {
+                Text(
+                    text = title,
+                    color = DesignTokens.Colors.TextPrimary,
+                    fontWeight = FontWeight.SemiBold,
+                    fontSize = 14.sp
+                )
+                Spacer(Modifier.height(2.dp))
+                Text(
+                    text = subtitle,
+                    color = DesignTokens.Colors.TextSecondary,
+                    fontSize = 12.sp
+                )
+            }
+
+            Icon(
+                imageVector = Icons.Default.ChevronRight,
+                contentDescription = null,
+                tint = DesignTokens.Colors.TextSecondary
+            )
+        }
+    }
+}
+
+@Composable
+private fun PrivacyOptionRow(
+    title: String,
+    subtitle: String,
+    selected: Boolean,
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    onClick: () -> Unit
+) {
+    val shape = RoundedCornerShape(16.dp)
+    val borderColor =
+        if (selected) GymRankColors.PrimaryAccent.copy(alpha = 0.7f) else DesignTokens.Colors.SurfaceInputs
+    val container =
+        if (selected) GymRankColors.PrimaryAccent.copy(alpha = 0.10f) else DesignTokens.Colors.SurfaceElevated
+
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(shape)
+            .clickable { onClick() }
+            .border(1.dp, borderColor, shape),
+        shape = shape,
+        color = container
+    ) {
+        Row(
+            modifier = Modifier.padding(14.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Surface(
+                shape = RoundedCornerShape(14.dp),
+                color = Color(0xFF1F1F1F),
+                border = BorderStroke(1.dp, borderColor)
+            ) {
+                Box(modifier = Modifier.size(38.dp), contentAlignment = Alignment.Center) {
+                    Icon(
+                        imageVector = icon,
+                        contentDescription = null,
+                        tint = if (selected) GymRankColors.PrimaryAccent else DesignTokens.Colors.TextPrimary
+                    )
+                }
+            }
+
+            Spacer(Modifier.width(12.dp))
+
+            Column(Modifier.weight(1f)) {
+                Text(title, color = DesignTokens.Colors.TextPrimary, fontWeight = FontWeight.SemiBold)
+                Spacer(Modifier.height(2.dp))
+                Text(subtitle, color = DesignTokens.Colors.TextSecondary, fontSize = 12.sp)
+            }
+
+            if (selected) {
+                Text("✓", color = GymRankColors.PrimaryAccent, fontWeight = FontWeight.Bold)
             }
         }
     }
@@ -396,9 +663,9 @@ private suspend fun compressImageToBase64Jpeg(
     val resolver = context.contentResolver
     val bytes = resolver.openInputStream(uri)?.use { it.readBytes() } ?: error("No se pudo leer imagen")
 
-    val bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size) ?: error("No se pudo decodificar imagen")
+    val bitmap =
+        BitmapFactory.decodeByteArray(bytes, 0, bytes.size) ?: error("No se pudo decodificar imagen")
 
-    // Comprimir bajando quality hasta llegar a target
     var quality = 88
     var out = compressJpeg(bitmap, quality)
 

@@ -7,13 +7,30 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 
+data class FeedWorkoutItem(
+    val id: String,
+    val title: String,
+    val durationMinutes: Int? = null,
+    val intensity: String? = null,
+    val type: String? = null,
+    val muscles: List<String> = emptyList(),
+    val description: String? = null,
+    val notes: String? = null,
+    val timestampLabel: String = "",
+    val exercises: List<ExerciseSummary> = emptyList()
+)
+
 data class FeedUiState(
     val loading: Boolean = false,
     val publicPosts: List<FeedPost> = emptyList(),
     val friendsPosts: List<FeedPost> = emptyList(),
     val friendsUids: List<String> = emptyList(),
     val searchResults: List<Pair<String, FeedRepositoryFirestoreImpl.UserDoc>> = emptyList(),
-    val error: String? = null
+    val error: String? = null,
+
+    // ✅ NUEVO: cache para “Ver más” expandido
+    val expandedWorkoutsByUser: Map<String, List<FeedWorkoutItem>> = emptyMap(),
+    val expandedLoadingByUser: Map<String, Boolean> = emptyMap()
 )
 
 class FeedViewModel(
@@ -62,10 +79,10 @@ class FeedViewModel(
         viewModelScope.launch {
             runCatching {
                 repo.addFriend(uid)
+                // no hace falta recargar todo el feed necesariamente, pero lo dejamos como lo tenías
                 load()
-                _state.value = _state.value.copy(searchResults = emptyList())
             }.onFailure {
-                _state.value = _state.value.copy(error = it.message ?: "Error agregando amigo")
+                _state.value = _state.value.copy(error = it.message ?: "Error enviando solicitud")
             }
         }
     }
@@ -74,9 +91,37 @@ class FeedViewModel(
         viewModelScope.launch {
             runCatching {
                 repo.removeFriend(uid)
-                load() // recarga lista, desaparece del tab Amigos
+                load()
             }.onFailure {
                 _state.value = _state.value.copy(error = it.message ?: "Error dejando de seguir")
+            }
+        }
+    }
+
+    // ✅ NUEVO: traer últimos 5 entrenos del usuario (para expand)
+    fun loadRecentWorkoutsForUser(ownerUid: String) {
+        if (ownerUid.isBlank()) return
+
+        // si ya está cargado, no pegamos otra vez
+        if (_state.value.expandedWorkoutsByUser.containsKey(ownerUid)) return
+
+        viewModelScope.launch {
+            _state.value = _state.value.copy(
+                expandedLoadingByUser = _state.value.expandedLoadingByUser + (ownerUid to true)
+            )
+
+            runCatching {
+                val list = repo.getRecentWorkoutsForUser(ownerUid, limit = 5)
+
+                _state.value = _state.value.copy(
+                    expandedWorkoutsByUser = _state.value.expandedWorkoutsByUser + (ownerUid to list),
+                    expandedLoadingByUser = _state.value.expandedLoadingByUser + (ownerUid to false)
+                )
+            }.onFailure {
+                _state.value = _state.value.copy(
+                    expandedLoadingByUser = _state.value.expandedLoadingByUser + (ownerUid to false),
+                    error = it.message ?: "Error cargando entrenamientos"
+                )
             }
         }
     }

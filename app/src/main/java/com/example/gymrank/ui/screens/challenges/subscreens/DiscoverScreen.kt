@@ -31,18 +31,20 @@ import com.example.gymrank.ui.theme.DesignTokens
 import com.example.gymrank.ui.theme.GymRankColors
 
 private data class ChallengeCard(
+    val templateId: String,
     val title: String,
     val subtitle: String,
     val level: String,
     val durationValue: Int,
-    val durationUnitShort: String, // "SEM" o "DÍAS"
+    val durationUnitShort: String,
     val imageUrl: String? = null
 )
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun DiscoverScreen(
-    onBack: () -> Unit
+    onBack: () -> Unit,
+    onOpenTemplateDetail: (templateId: String) -> Unit // ✅ NUEVO
 ) {
     val bg = runCatching { DesignTokens.Colors.BackgroundBase }.getOrElse { Color(0xFF000000) }
     val surface = runCatching { DesignTokens.Colors.SurfaceElevated }.getOrElse { Color(0xFF101010) }
@@ -54,23 +56,19 @@ fun DiscoverScreen(
     var tab by remember { mutableIntStateOf(0) }
     var query by remember { mutableStateOf("") }
 
-    // Repo + VM
     val repo = remember { ChallengeRepositoryFirestoreImpl() }
     val vm: DiscoverViewModel = viewModel(factory = DiscoverViewModelFactory(repo))
     val state by vm.state.collectAsState()
 
     LaunchedEffect(Unit) { vm.load() }
 
-    val cardsAll = remember(state.templates) {
-        state.templates.map { it.toUiCard() }
-    }
+    val cardsAll = remember(state.templates) { state.templates.map { it.toUiCard() } }
 
     val filtered = remember(cardsAll, query, tab) {
         val base = if (tab == 0) cardsAll else emptyList()
         if (query.isBlank()) base
         else base.filter {
-            it.title.contains(query, ignoreCase = true) ||
-                    it.subtitle.contains(query, ignoreCase = true)
+            it.title.contains(query, ignoreCase = true) || it.subtitle.contains(query, ignoreCase = true)
         }
     }
 
@@ -135,9 +133,7 @@ fun DiscoverScreen(
             when {
                 state.loading -> {
                     Box(
-                        Modifier
-                            .fillMaxWidth()
-                            .padding(top = 18.dp),
+                        Modifier.fillMaxWidth().padding(top = 18.dp),
                         contentAlignment = Alignment.Center
                     ) { CircularProgressIndicator(color = accent) }
                 }
@@ -175,7 +171,8 @@ fun DiscoverScreen(
                                 surface = surface,
                                 textPrimary = textPrimary,
                                 textSecondary = textSecondary,
-                                accent = accent
+                                accent = accent,
+                                onClick = { onOpenTemplateDetail(c.templateId) } // ✅
                             )
                         }
                         item { Spacer(Modifier.height(80.dp)) }
@@ -195,6 +192,7 @@ private fun ChallengeTemplate.toUiCard(): ChallengeCard {
     }
 
     return ChallengeCard(
+        templateId = id,
         title = title,
         subtitle = subtitle,
         level = level.ifBlank { "Principiante" },
@@ -211,10 +209,7 @@ private fun RowScope.SegBtn(label: String, selected: Boolean, accent: Color, onC
     val shape = RoundedCornerShape(12.dp)
 
     Surface(
-        modifier = Modifier
-            .weight(1f)
-            .clip(shape)
-            .clickable { onClick() },
+        modifier = Modifier.weight(1f).clip(shape).clickable { onClick() },
         shape = shape,
         color = bg,
         border = if (selected) BorderStroke(1.dp, border) else null
@@ -237,32 +232,30 @@ private fun ChallengeListCard(
     surface: Color,
     textPrimary: Color,
     textSecondary: Color,
-    accent: Color
+    accent: Color,
+    onClick: () -> Unit
 ) {
     Surface(
         color = surface,
         shape = RoundedCornerShape(18.dp),
         border = BorderStroke(1.dp, accent.copy(alpha = 0.22f)),
-        modifier = Modifier.fillMaxWidth()
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(18.dp))
+            .clickable { onClick() } // ✅ card clickable
     ) {
         Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(12.dp),
+            modifier = Modifier.fillMaxWidth().padding(12.dp),
             horizontalArrangement = Arrangement.spacedBy(12.dp),
             verticalAlignment = Alignment.Top
         ) {
-            // Imagen izquierda
             Box(
                 Modifier
                     .size(width = 132.dp, height = 86.dp)
                     .clip(RoundedCornerShape(14.dp))
                     .background(
                         Brush.linearGradient(
-                            listOf(
-                                Color.White.copy(alpha = 0.08f),
-                                Color.White.copy(alpha = 0.03f)
-                            )
+                            listOf(Color.White.copy(alpha = 0.08f), Color.White.copy(alpha = 0.03f))
                         )
                     ),
                 contentAlignment = Alignment.Center
@@ -285,11 +278,8 @@ private fun ChallengeListCard(
                 }
             }
 
-            // Derecha
             Column(
-                modifier = Modifier
-                    .weight(1f)
-                    .padding(top = 2.dp),
+                modifier = Modifier.weight(1f).padding(top = 2.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 Text(
@@ -315,11 +305,7 @@ private fun ChallengeListCard(
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
                     LevelPill(text = card.level, accent = accent)
-                    DurationCircle(
-                        value = card.durationValue,
-                        unitShort = card.durationUnitShort,
-                        accent = accent
-                    )
+                    DurationCircle(value = card.durationValue, unitShort = card.durationUnitShort, accent = accent)
                 }
             }
         }
@@ -332,9 +318,7 @@ private fun LevelPill(text: String, accent: Color) {
         shape = RoundedCornerShape(999.dp),
         color = accent.copy(alpha = 0.14f),
         border = BorderStroke(1.dp, accent.copy(alpha = 0.30f)),
-        modifier = Modifier
-            .heightIn(min = 32.dp)
-            .wrapContentWidth()
+        modifier = Modifier.heightIn(min = 32.dp).wrapContentWidth()
     ) {
         Text(
             text = text,
@@ -369,7 +353,7 @@ private fun DurationCircle(value: Int, unitShort: String, accent: Color) {
                 maxLines = 1
             )
             Text(
-                text = unitShort, // "SEM" / "DÍAS"
+                text = unitShort,
                 color = Color.White,
                 fontSize = 10.sp,
                 fontWeight = FontWeight.SemiBold,

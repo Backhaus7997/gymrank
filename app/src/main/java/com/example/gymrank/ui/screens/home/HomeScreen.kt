@@ -592,7 +592,7 @@ fun HomeScreen(
             HomeTopBar(
                 userName = if (profileName.isNotBlank()) profileName else uiState.userName,
                 onOpenRanking = onOpenRanking,
-                onOpenProfile = { showProfileSheet = true }
+                onOpenProfile = onOpenProfile   // <-- navega a "profile"
             )
         }
 

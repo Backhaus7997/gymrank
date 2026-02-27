@@ -43,7 +43,8 @@ fun ChallengesScreen(
     onOpenDiscover: () -> Unit,
     onOpenQuests: () -> Unit,
     onOpenGamble: () -> Unit,
-    onOpenEquipment: () -> Unit
+    onOpenEquipment: () -> Unit,
+    onOpenUserChallengeDetail: (userChallengeId: String, templateId: String) -> Unit = { _, _ -> }
 ) {
     val bg = runCatching { DesignTokens.Colors.BackgroundBase }.getOrElse { Color(0xFF000000) }
     val surface = runCatching { DesignTokens.Colors.SurfaceElevated }.getOrElse { Color(0xFF1C1C1E) }

@@ -53,7 +53,7 @@ import com.google.firebase.firestore.SetOptions
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.tasks.await
 import com.example.gymrank.ui.screens.home.profile.ProfileScreen
-import com.example.gymrank.ui.screens.feed.subscreens.UserWorkoutsScreen
+import com.example.gymrank.ui.screens.challenges.subscreens.ChallengeTemplateDetailScreen
 
 private const val FLOW_LOGIN = "login"
 private const val FLOW_SIGNUP = "signup"
@@ -81,7 +81,6 @@ fun AppNavigation(sessionViewModel: SessionViewModel) {
     var flowState by rememberSaveable { mutableStateOf(FLOW_LOGIN) }
 
     // ✅ FLAG CLAVE: onboarding SOLO cuando venís de SIGNUP
-    // (se setea en signup y se limpia cuando terminás onboarding)
     var shouldShowOnboarding by rememberSaveable { mutableStateOf(false) }
 
     fun setFlow(flow: String) {
@@ -91,7 +90,6 @@ fun AppNavigation(sessionViewModel: SessionViewModel) {
 
     fun doLogout() {
         FirebaseAuth.getInstance().signOut()
-        // al logout, volvemos a default
         flowState = FLOW_LOGIN
         shouldShowOnboarding = false
 
@@ -102,9 +100,7 @@ fun AppNavigation(sessionViewModel: SessionViewModel) {
     }
 
     fun navigateToCreateRoutine() {
-        navController.navigate("workout/create_routine") {
-            launchSingleTop = true
-        }
+        navController.navigate("workout/create_routine") { launchSingleTop = true }
     }
 
     fun navigateToRankingTab() {
@@ -138,7 +134,6 @@ fun AppNavigation(sessionViewModel: SessionViewModel) {
 
         if (gym != null) {
             runCatching { sessionViewModel.selectGym(gym) }
-
             navController.navigate(Screen.Home.route) {
                 popUpTo(Screen.Welcome.route) { inclusive = true }
                 launchSingleTop = true
@@ -167,7 +162,6 @@ fun AppNavigation(sessionViewModel: SessionViewModel) {
 
                 LaunchedEffect(firebaseUser?.uid) {
                     if (firebaseUser != null) {
-                        // ✅ sesión existente => tratar como LOGIN (no onboarding)
                         setFlow(FLOW_LOGIN)
                         shouldShowOnboarding = false
 
@@ -183,19 +177,16 @@ fun AppNavigation(sessionViewModel: SessionViewModel) {
                 } else {
                     WelcomeScreen(
                         onStartSignUp = {
-                            // ✅ si el usuario toca "Empezar" => SIGNUP + onboarding obligatorio
                             setFlow(FLOW_SIGNUP)
                             shouldShowOnboarding = true
                             navController.navigate("login_signup") { launchSingleTop = true }
                         },
                         onNavigateToLogin = {
-                            // ✅ Login => sin onboarding
                             setFlow(FLOW_LOGIN)
                             shouldShowOnboarding = false
                             navController.navigate(Screen.Login.route) { launchSingleTop = true }
                         },
                         onSignUpSuccessNavigate = {
-                            // ✅ por si tu Welcome ya tenía este callback
                             setFlow(FLOW_SIGNUP)
                             shouldShowOnboarding = true
                             navController.navigate(Screen.SelectGym.route) { launchSingleTop = true }
@@ -211,8 +202,6 @@ fun AppNavigation(sessionViewModel: SessionViewModel) {
                 LoginScreen(
                     onLoginSuccess = { user ->
                         sessionViewModel.setUser(user)
-
-                        // ✅ login => NO onboarding
                         setFlow(FLOW_LOGIN)
                         shouldShowOnboarding = false
 
@@ -224,8 +213,6 @@ fun AppNavigation(sessionViewModel: SessionViewModel) {
                     },
                     onSignUpSuccess = { user ->
                         sessionViewModel.setUser(user)
-
-                        // ✅ signup => SI onboarding (siempre)
                         setFlow(FLOW_SIGNUP)
                         shouldShowOnboarding = true
 
@@ -238,27 +225,6 @@ fun AppNavigation(sessionViewModel: SessionViewModel) {
                 )
             }
 
-            composable("feed/user_workouts/{ownerUid}") { entry ->
-                val ownerUid = entry.arguments?.getString("ownerUid").orEmpty()
-                UserWorkoutsScreen(
-                    ownerUid = ownerUid,
-                    onBack = { navController.popBackStack() },
-                    onOpenWorkoutDetail = { workoutId ->
-                        navController.navigate("feed/workout_detail/$ownerUid/$workoutId")
-                    }
-                )
-            }
-
-            composable("feed/workout_detail/{ownerUid}/{workoutId}") { entry ->
-                val ownerUid = entry.arguments?.getString("ownerUid").orEmpty()
-                val workoutId = entry.arguments?.getString("workoutId").orEmpty()
-                WorkoutDetailScreen(
-                    ownerUid = ownerUid,
-                    workoutId = workoutId,
-                    onBack = { navController.popBackStack() }
-                )
-            }
-
             // ✅ LOGIN con signup abierto
             composable("login_signup") {
                 val userRepo = remember { UserRepositoryImpl() }
@@ -267,8 +233,6 @@ fun AppNavigation(sessionViewModel: SessionViewModel) {
                     openSignUpOnStart = true,
                     onLoginSuccess = { user ->
                         sessionViewModel.setUser(user)
-
-                        // ✅ login => NO onboarding
                         setFlow(FLOW_LOGIN)
                         shouldShowOnboarding = false
 
@@ -280,8 +244,6 @@ fun AppNavigation(sessionViewModel: SessionViewModel) {
                     },
                     onSignUpSuccess = { user ->
                         sessionViewModel.setUser(user)
-
-                        // ✅ signup => SI onboarding (siempre)
                         setFlow(FLOW_SIGNUP)
                         shouldShowOnboarding = true
 
@@ -306,7 +268,6 @@ fun AppNavigation(sessionViewModel: SessionViewModel) {
 
                             runCatching { sessionViewModel.selectGym(gym) }
 
-                            // ✅ CLAVE: onboarding SOLO si shouldShowOnboarding == true (signup)
                             val destination =
                                 if (shouldShowOnboarding) Screen.Onboarding.route
                                 else Screen.Home.route
@@ -324,9 +285,7 @@ fun AppNavigation(sessionViewModel: SessionViewModel) {
             composable(Screen.Onboarding.route) {
                 OnboardingScreen(
                     onFinished = {
-                        // ✅ ya lo completó: no volver a mostrar
                         shouldShowOnboarding = false
-
                         navController.navigate(Screen.Home.route) {
                             popUpTo(Screen.Welcome.route) { inclusive = true }
                             launchSingleTop = true
@@ -347,20 +306,62 @@ fun AppNavigation(sessionViewModel: SessionViewModel) {
                 )
             }
 
+            // ✅ FEED TAB
             composable("feed") {
                 FeedScreen(
-                    onOpenUserWorkouts = { ownerUid ->
-                        navController.navigate("feed/user_workouts/$ownerUid")
+                    onOpenWorkoutDetail = { ownerUid, workoutId ->
+                        navController.navigate("feed/workout_detail/$ownerUid/$workoutId")
                     }
                 )
             }
 
+            // ✅ NUEVO: detalle por usuario (LIST MODE: últimos 5)
+            composable("feed/workout_detail/{ownerUid}/{workoutId}") { entry ->
+                val ownerUid = entry.arguments?.getString("ownerUid").orEmpty()
+                val workoutId = entry.arguments?.getString("workoutId").orEmpty()
+
+                WorkoutDetailScreen(
+                    ownerUid = ownerUid,
+                    workoutId = workoutId,
+                    onBack = { navController.popBackStack() }
+                )
+            }
+
+            // ✅ (Opcional) detalle SINGLE por workoutId (si algún día lo necesitás)
+            composable("feed/workout_detail/{ownerUid}/{workoutId}") { entry ->
+                val ownerUid = entry.arguments?.getString("ownerUid").orEmpty()
+                val workoutId = entry.arguments?.getString("workoutId").orEmpty()
+                WorkoutDetailScreen(
+                    ownerUid = ownerUid,
+                    workoutId = workoutId, // ✅ SINGLE MODE
+                    onBack = { navController.popBackStack() }
+                )
+            }
+
+            // ✅ CHALLENGES
             composable("challenges") {
                 ChallengesScreen(
                     onOpenDiscover = { navController.navigate("challenges/discover") },
                     onOpenQuests = { navController.navigate("challenges/quests") },
                     onOpenGamble = { navController.navigate("challenges/gamble") },
-                    onOpenEquipment = { navController.navigate("challenges/equipment") }
+                    onOpenEquipment = { navController.navigate("challenges/equipment") },
+                    onOpenUserChallengeDetail = { _, templateId ->
+                        navController.navigate("challenges/template_detail/$templateId")
+                    }
+                )
+            }
+
+            composable("challenges/template_detail/{templateId}") { entry ->
+                val templateId = entry.arguments?.getString("templateId").orEmpty()
+                ChallengeTemplateDetailScreen(
+                    templateId = templateId,
+                    onBack = { navController.popBackStack() },
+                    onAcceptedGoToActive = {
+                        navController.navigate("challenges") {
+                            popUpTo("challenges") { inclusive = false }
+                            launchSingleTop = true
+                        }
+                    }
                 )
             }
 
@@ -418,7 +419,7 @@ fun AppNavigation(sessionViewModel: SessionViewModel) {
                 )
             }
 
-            // ✅ NUEVO: FRIEND REQUESTS
+            // ✅ FRIEND REQUESTS
             composable("friends/requests") {
                 FriendRequestsScreen(onBack = { navController.popBackStack() })
             }
@@ -432,7 +433,14 @@ fun AppNavigation(sessionViewModel: SessionViewModel) {
             }
 
             // ✅ SUBSCREENS CHALLENGES
-            composable("challenges/discover") { DiscoverScreen(onBack = { navController.popBackStack() }) }
+            composable("challenges/discover") {
+                DiscoverScreen(
+                    onBack = { navController.popBackStack() },
+                    onOpenTemplateDetail = { templateId ->
+                        navController.navigate("challenges/template_detail/$templateId")
+                    }
+                )
+            }
             composable("challenges/quests") { QuestsScreen(onBack = { navController.popBackStack() }) }
             composable("challenges/gamble") {
                 GambleScreen(
@@ -513,6 +521,7 @@ fun AppNavigation(sessionViewModel: SessionViewModel) {
                 )
             }
 
+            // ✅ (si usás este route desde workout/history u otros)
             composable("workout/detail/{ownerUid}/{workoutId}") { entry ->
                 val ownerUid = entry.arguments?.getString("ownerUid").orEmpty()
                 val workoutId = entry.arguments?.getString("workoutId").orEmpty()
