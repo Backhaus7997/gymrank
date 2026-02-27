@@ -41,6 +41,9 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import coil.compose.AsyncImage
 import com.example.gymrank.ui.theme.DesignTokens
 import com.example.gymrank.ui.theme.GymRankColors
+import com.google.firebase.auth.FirebaseAuth
+import com.google.firebase.firestore.FirebaseFirestore
+import com.google.firebase.firestore.ListenerRegistration
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -91,6 +94,129 @@ fun ProfileScreen(
                     vm.setSavingState(false)
                 }
             }
+        }
+    }
+
+    // =========================
+// ✅ Pending friend requests count (tolerante a distintas rutas/campos)
+// =========================
+    val uid = FirebaseAuth.getInstance().currentUser?.uid.orEmpty()
+    val db = remember { FirebaseFirestore.getInstance() }
+
+    var pendingRequestsCount by remember { mutableIntStateOf(0) }
+    var isPendingRequestsLoading by remember { mutableStateOf(true) }
+
+// contadores por fuente (para tomar el mejor)
+    var subA by remember { mutableIntStateOf(0) } // users/{uid}/friendRequests
+    var subB by remember { mutableIntStateOf(0) } // users/{uid}/friend_requests
+    var globalA by remember { mutableIntStateOf(0) } // friendRequests
+    var globalB by remember { mutableIntStateOf(0) } // friend_requests
+
+    fun isPending(doc: com.google.firebase.firestore.DocumentSnapshot): Boolean {
+        val raw = (doc.getString("status")
+            ?: doc.getString("state")
+            ?: doc.getString("requestStatus")
+            ?: "").trim().uppercase()
+
+        // si no hay status, asumimos pendiente
+        return raw.isBlank() || raw == "PENDING" || raw == "REQUESTED"
+    }
+
+    fun recomputeBest() {
+        pendingRequestsCount = maxOf(subA, subB, globalA, globalB)
+    }
+
+    DisposableEffect(uid) {
+        if (uid.isBlank()) {
+            pendingRequestsCount = 0
+            subA = 0; subB = 0; globalA = 0; globalB = 0
+            isPendingRequestsLoading = false
+            onDispose { }
+        } else {
+            isPendingRequestsLoading = true
+
+            var r1: ListenerRegistration? = null
+            var r2: ListenerRegistration? = null
+            var r3: ListenerRegistration? = null
+            var r4: ListenerRegistration? = null
+            var r5: ListenerRegistration? = null
+            var r6: ListenerRegistration? = null
+
+            // A) users/{uid}/friendRequests
+            r1 = db.collection("users")
+                .document(uid)
+                .collection("friendRequests")
+                .addSnapshotListener { snap, _ ->
+                    subA = snap?.documents?.count { isPending(it) } ?: 0
+                    recomputeBest()
+                    isPendingRequestsLoading = false
+                }
+
+            // B) users/{uid}/friend_requests (por si tu colección tiene otro nombre)
+            r2 = db.collection("users")
+                .document(uid)
+                .collection("friend_requests")
+                .addSnapshotListener { snap, _ ->
+                    subB = snap?.documents?.count { isPending(it) } ?: 0
+                    recomputeBest()
+                    isPendingRequestsLoading = false
+                }
+
+            // C) friendRequests con toUid
+            r3 = db.collection("friendRequests")
+                .whereEqualTo("toUid", uid)
+                .addSnapshotListener { snap, _ ->
+                    globalA = maxOf(globalA, snap?.documents?.count { isPending(it) } ?: 0)
+                    recomputeBest()
+                    isPendingRequestsLoading = false
+                }
+
+            // D) friendRequests con toUserId
+            r4 = db.collection("friendRequests")
+                .whereEqualTo("toUserId", uid)
+                .addSnapshotListener { snap, _ ->
+                    globalA = maxOf(globalA, snap?.documents?.count { isPending(it) } ?: 0)
+                    recomputeBest()
+                    isPendingRequestsLoading = false
+                }
+
+            // E) friendRequests con receiverUid
+            r5 = db.collection("friendRequests")
+                .whereEqualTo("receiverUid", uid)
+                .addSnapshotListener { snap, _ ->
+                    globalA = maxOf(globalA, snap?.documents?.count { isPending(it) } ?: 0)
+                    recomputeBest()
+                    isPendingRequestsLoading = false
+                }
+
+            // F) friend_requests (colección global alternativa)
+            r6 = db.collection("friend_requests")
+                .whereEqualTo("toUid", uid)
+                .addSnapshotListener { snap, _ ->
+                    globalB = snap?.documents?.count { isPending(it) } ?: 0
+                    recomputeBest()
+                    isPendingRequestsLoading = false
+                }
+
+            onDispose {
+                r1?.remove()
+                r2?.remove()
+                r3?.remove()
+                r4?.remove()
+                r5?.remove()
+                r6?.remove()
+            }
+        }
+    }
+
+    val friendRequestsHintText = remember(isPendingRequestsLoading, pendingRequestsCount) {
+        when {
+            isPendingRequestsLoading -> "Cargando solicitudes…"
+            pendingRequestsCount > 0 -> {
+                val plural = if (pendingRequestsCount == 1) "solicitud" else "solicitudes"
+                "Tenés $pendingRequestsCount $plural pendiente${if (pendingRequestsCount == 1) "" else "s"}."
+            }
+            else -> "No tenés solicitudes pendientes."
         }
     }
 
@@ -187,14 +313,12 @@ fun ProfileScreen(
                 tonalElevation = 0.dp,
                 shadowElevation = 10.dp
             ) {
-                // ✅ SCROLL REAL
                 Column(
                     modifier = Modifier
                         .verticalScroll(scrollState)
                         .navigationBarsPadding()
                         .padding(18.dp)
                 ) {
-
                     // Header
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -309,7 +433,7 @@ fun ProfileScreen(
 
                     Spacer(Modifier.height(14.dp))
 
-                    // ✅ Privacidad del perfil (1 sola card como la foto)
+                    // Privacidad del perfil
                     Text("Privacidad del perfil", color = DesignTokens.Colors.TextSecondary, fontSize = 12.sp)
                     Spacer(Modifier.height(4.dp))
                     Text(
@@ -359,8 +483,6 @@ fun ProfileScreen(
                         Text(ui.error ?: "", color = GymRankColors.Error, fontSize = 12.sp)
                     }
 
-                    // ✅ Sacamos el texto viejo "Cambios guardados ✅" (ahora es Snackbar)
-
                     Spacer(Modifier.height(14.dp))
 
                     // Card solicitudes
@@ -378,7 +500,7 @@ fun ProfileScreen(
                             )
                             Spacer(Modifier.height(4.dp))
                             Text(
-                                ui.friendRequestsHint,
+                                friendRequestsHintText,
                                 color = DesignTokens.Colors.TextSecondary,
                                 fontSize = 12.sp
                             )
