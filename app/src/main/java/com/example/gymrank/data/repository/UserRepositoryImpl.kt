@@ -120,4 +120,71 @@ class UserRepositoryImpl(
             )
             .await()
     }
+
+    // ✅ Perfil (sin Firebase Storage): guardamos photoBase64 en el doc del user
+    data class MyProfileData(
+        val uid: String,
+        val username: String,
+        val experience: String,
+        val gender: String,
+        val feedVisibility: String,
+        val photoBase64: String?
+    )
+
+    suspend fun getMyProfile(): MyProfileData {
+        val uid = auth.currentUser?.uid ?: error("No hay usuario logueado (uid null)")
+        val doc = db.collection("users").document(uid).get().await()
+
+        val username = doc.getString("username")?.trim().orEmpty()
+        val experience = doc.getString("experience")?.trim().orEmpty().ifBlank { "Intermedio" }
+        val gender = doc.getString("gender")?.trim().orEmpty().ifBlank { "Otro" }
+
+        // en tu DB actual: feedVisibility (lo vi en tu screenshot)
+        // y en tu código Home: feedVisibility
+        val feedVisibility = doc.getString("feedVisibility")?.trim()?.uppercase()
+            ?: DEFAULT_FEED_VISIBILITY
+
+        val photoBase64 = doc.getString("photoBase64")
+
+        return MyProfileData(
+            uid = uid,
+            username = username,
+            experience = experience,
+            gender = gender,
+            feedVisibility = feedVisibility,
+            photoBase64 = photoBase64
+        )
+    }
+
+    suspend fun updateMyProfile(
+        username: String,
+        experience: String,
+        gender: String,
+        feedVisibility: String,
+        photoBase64: String?
+    ) {
+        val uid = requireUid()
+
+        val safeVisibility = feedVisibility.trim().uppercase().let {
+            if (it in listOf("PUBLIC", "FRIENDS", "PRIVATE")) it else DEFAULT_FEED_VISIBILITY
+        }
+
+        val updates = mutableMapOf<String, Any?>(
+            "username" to username.trim(),
+            "experience" to experience.trim(),
+            "gender" to gender.trim(),
+            "feedVisibility" to safeVisibility,
+            "updatedAt" to FieldValue.serverTimestamp()
+        )
+
+        // si viene null, NO pisamos la foto; si viene string, actualizamos
+        if (photoBase64 != null) {
+            updates["photoBase64"] = photoBase64
+        }
+
+        db.collection("users")
+            .document(uid)
+            .set(updates, SetOptions.merge())
+            .await()
+    }
 }

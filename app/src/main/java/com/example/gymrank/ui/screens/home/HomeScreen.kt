@@ -5,26 +5,33 @@
 
 package com.example.gymrank.ui.screens.home
 
+import android.net.Uri
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.FitnessCenter
 import androidx.compose.material.icons.filled.FlashOn
+import androidx.compose.material.icons.filled.GroupAdd
 import androidx.compose.material.icons.filled.Logout
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Timeline
-import androidx.compose.material.icons.filled.Tune
-import androidx.compose.material.icons.filled.GroupAdd
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -34,21 +41,21 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import coil.compose.AsyncImage
 import com.example.gymrank.data.repository.UserRepositoryImpl
 import com.example.gymrank.data.repository.WorkoutRepositoryFirestoreImpl
 import com.example.gymrank.domain.model.Workout
 import com.example.gymrank.ui.components.BodyWithMuscleMasks
 import com.example.gymrank.ui.components.GlassCard
-import com.example.gymrank.ui.components.MuscleId
 import com.example.gymrank.ui.session.SessionViewModel
 import com.example.gymrank.ui.theme.DesignTokens
 import com.example.gymrank.ui.theme.GymRankColors
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.firestore.FirebaseFirestore
+import com.google.firebase.storage.FirebaseStorage
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.tasks.await
@@ -61,7 +68,6 @@ import kotlin.math.max
 // ============================================
 
 private enum class FeedVisibility { PUBLIC, FRIENDS, PRIVATE }
-
 private fun FeedVisibility.toFirestore(): String = name
 
 private fun String?.toFeedVisibility(): FeedVisibility = when (this?.trim()?.uppercase()) {
@@ -89,24 +95,80 @@ fun HomeScreen(
     onLogWorkout: () -> Unit = {},
     onOpenRanking: () -> Unit = {},
     onLogout: () -> Unit = {},
-    onOpenFriendRequests: () -> Unit = {}, // ✅ NUEVO
+    onOpenFriendRequests: () -> Unit = {},
+    onOpenProfile: () -> Unit = {}, // lo dejamos por compatibilidad
 ) {
     val selectedGym by sessionViewModel.selectedGym.collectAsState()
     val uiState by viewModel.uiState.collectAsState()
 
     val uid = remember { FirebaseAuth.getInstance().currentUser?.uid.orEmpty() }
     val db = remember { FirebaseFirestore.getInstance() }
+    val scope = rememberCoroutineScope()
 
     // ============================
     // ✅ Feed visibility (perfil)
     // ============================
     val userRepo = remember { UserRepositoryImpl() }
-    val scope = rememberCoroutineScope()
 
     var feedVisibility by remember { mutableStateOf(FeedVisibility.PUBLIC) }
     var isFeedVisibilityLoading by remember { mutableStateOf(false) }
     var showPrivacySheet by remember { mutableStateOf(false) }
     val privacySheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+
+    // ============================
+    // ✅ Profile BottomSheet (como la 2da imagen)
+    // ============================
+    var showProfileSheet by remember { mutableStateOf(false) }
+    val profileSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+
+    // Campos de perfil (Firestore)
+    var profileUsername by remember { mutableStateOf("") }
+    var profileFullName by remember { mutableStateOf("") }
+    var profileExperience by remember { mutableStateOf("Intermedio") }
+    var profileGender by remember { mutableStateOf("Otro") }
+    var profilePhotoUrl by remember { mutableStateOf<String?>(null) }
+
+    // estados para upload foto
+    var isUploadingPhoto by remember { mutableStateOf(false) }
+    var uploadPhotoError by remember { mutableStateOf<String?>(null) }
+
+    // ✅ Launcher picker de imagen (Photo Picker) - mejor que GetContent y sin permisos
+    val pickImageLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.PickVisualMedia()
+    ) { uri: Uri? ->
+        if (uri == null || uid.isBlank()) return@rememberLauncherForActivityResult
+
+        scope.launch {
+            isUploadingPhoto = true
+            uploadPhotoError = null
+
+            runCatching {
+                val storageRef = FirebaseStorage.getInstance()
+                    .reference
+                    .child("users/$uid/profile_${System.currentTimeMillis()}.jpg")
+
+                storageRef.putFile(uri).await()
+                val downloadUrl = storageRef.downloadUrl.await().toString()
+
+                val payload = hashMapOf<String, Any?>(
+                    "photoUrl" to downloadUrl,
+                    "updatedAt" to System.currentTimeMillis()
+                )
+
+                FirebaseFirestore.getInstance()
+                    .collection("users")
+                    .document(uid)
+                    .update(payload)
+                    .await()
+
+                profilePhotoUrl = downloadUrl
+            }.onFailure { e ->
+                uploadPhotoError = e.message ?: "Error subiendo la foto"
+            }
+
+            isUploadingPhoto = false
+        }
+    }
 
     LaunchedEffect(selectedGym) {
         selectedGym?.let { viewModel.setGymData(it) }
@@ -124,9 +186,7 @@ fun HomeScreen(
         }
     }
 
-    val setsByMuscleItems = remember(weekWorkouts) {
-        buildSetsByMuscleItemsThisWeek(weekWorkouts)
-    }
+    val setsByMuscleItems = remember(weekWorkouts) { buildSetsByMuscleItemsThisWeek(weekWorkouts) }
 
     // ============================================
     // ✅ Calendar selection (default = today)
@@ -150,9 +210,14 @@ fun HomeScreen(
 
         runCatching {
             val snap = db.collection("users").document(uid).get().await()
-            profileName = snap.getString("name")
-                ?: snap.getString("username")
-                        ?: ""
+
+            profileFullName = snap.getString("name") ?: ""
+            profileUsername = snap.getString("username") ?: ""
+            profileName = profileFullName.ifBlank { profileUsername.ifBlank { uiState.userName } }
+
+            profileExperience = snap.getString("experience") ?: profileExperience
+            profileGender = snap.getString("gender") ?: profileGender
+            profilePhotoUrl = snap.getString("photoUrl")
 
             feedVisibility = snap.getString("feedVisibility").toFeedVisibility()
         }
@@ -260,11 +325,10 @@ fun HomeScreen(
         buildMuscleCountsFromRoutinePlan(selectedDayMuscles)
     }
 
-    // ✅ ejemplo simple (lo tenías así). Si querés que sea real por workouts, lo cambiamos después.
     val completedThisWeek = remember(todayIndex) { (todayIndex + 1).coerceIn(0, 7) }
 
     // ============================================
-    // UI MODALS
+    // UI MODALS (plan)
     // ============================================
     if (showPlanDaysModal) {
         AlertDialog(
@@ -305,9 +369,7 @@ fun HomeScreen(
                     }
                 }
             },
-            confirmButton = {
-                TextButton(onClick = { showPlanDaysModal = false }) { Text("Cerrar") }
-            }
+            confirmButton = { TextButton(onClick = { showPlanDaysModal = false }) { Text("Cerrar") } }
         )
     }
 
@@ -368,85 +430,152 @@ fun HomeScreen(
                     }
                 ) { Text("Guardar") }
             },
-            dismissButton = {
-                TextButton(onClick = { showMusclePickerModal = false }) { Text("Cancelar") }
-            }
+            dismissButton = { TextButton(onClick = { showMusclePickerModal = false }) { Text("Cancelar") } }
         )
     }
 
     // ============================
-    // ✅ BottomSheet: Privacidad del perfil
+    // ✅ BottomSheet: Privacidad
     // ============================
     if (showPrivacySheet) {
         ModalBottomSheet(
             onDismissRequest = { showPrivacySheet = false },
-            sheetState = privacySheetState,
-            containerColor = DesignTokens.Colors.SurfaceElevated
+            sheetState = privacySheetState
         ) {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(16.dp),
-                verticalArrangement = Arrangement.spacedBy(10.dp)
-            ) {
-                Text("Privacidad del perfil", fontWeight = FontWeight.Bold)
+            Surface(color = DesignTokens.Colors.SurfaceElevated) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Text("Privacidad del perfil", fontWeight = FontWeight.Bold)
 
-                Text(
-                    "Esto define quién puede ver tus entrenamientos en el feed.",
-                    color = DesignTokens.Colors.TextSecondary,
-                    style = MaterialTheme.typography.bodySmall
-                )
-
-                Spacer(Modifier.height(6.dp))
-
-                fun pick(v: FeedVisibility) {
-                    if (uid.isBlank()) return
-                    isFeedVisibilityLoading = true
-
-                    scope.launch {
-                        runCatching { userRepo.updateMyFeedVisibility(v.toFirestore()) }
-                            .onSuccess {
-                                feedVisibility = v
-                                showPrivacySheet = false
-                            }
-                        isFeedVisibilityLoading = false
-                    }
-                }
-
-                PrivacyOptionRow(
-                    selected = feedVisibility == FeedVisibility.PUBLIC,
-                    title = "Público",
-                    subtitle = FeedVisibility.PUBLIC.subtitleEs(),
-                    onClick = { pick(FeedVisibility.PUBLIC) }
-                )
-
-                PrivacyOptionRow(
-                    selected = feedVisibility == FeedVisibility.FRIENDS,
-                    title = "Solo amigos",
-                    subtitle = FeedVisibility.FRIENDS.subtitleEs(),
-                    onClick = { pick(FeedVisibility.FRIENDS) }
-                )
-
-                PrivacyOptionRow(
-                    selected = feedVisibility == FeedVisibility.PRIVATE,
-                    title = "Privado",
-                    subtitle = FeedVisibility.PRIVATE.subtitleEs(),
-                    onClick = { pick(FeedVisibility.PRIVATE) }
-                )
-
-                if (isFeedVisibilityLoading) {
-                    Spacer(Modifier.height(8.dp))
-                    LinearProgressIndicator(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(6.dp)
-                            .clip(RoundedCornerShape(999.dp)),
-                        color = GymRankColors.PrimaryAccent,
-                        trackColor = DesignTokens.Colors.SurfaceInputs
+                    Text(
+                        "Esto define quién puede ver tus entrenamientos en el feed.",
+                        color = DesignTokens.Colors.TextSecondary,
+                        style = MaterialTheme.typography.bodySmall
                     )
-                }
 
-                Spacer(Modifier.height(10.dp))
+                    Spacer(Modifier.height(6.dp))
+
+                    fun pick(v: FeedVisibility) {
+                        if (uid.isBlank()) return
+                        isFeedVisibilityLoading = true
+
+                        scope.launch {
+                            runCatching { userRepo.updateMyFeedVisibility(v.toFirestore()) }
+                                .onSuccess {
+                                    feedVisibility = v
+                                    showPrivacySheet = false
+                                }
+                            isFeedVisibilityLoading = false
+                        }
+                    }
+
+                    PrivacyOptionRow(
+                        selected = feedVisibility == FeedVisibility.PUBLIC,
+                        title = "Público",
+                        subtitle = FeedVisibility.PUBLIC.subtitleEs(),
+                        onClick = { pick(FeedVisibility.PUBLIC) }
+                    )
+                    PrivacyOptionRow(
+                        selected = feedVisibility == FeedVisibility.FRIENDS,
+                        title = "Solo amigos",
+                        subtitle = FeedVisibility.FRIENDS.subtitleEs(),
+                        onClick = { pick(FeedVisibility.FRIENDS) }
+                    )
+                    PrivacyOptionRow(
+                        selected = feedVisibility == FeedVisibility.PRIVATE,
+                        title = "Privado",
+                        subtitle = FeedVisibility.PRIVATE.subtitleEs(),
+                        onClick = { pick(FeedVisibility.PRIVATE) }
+                    )
+
+                    if (isFeedVisibilityLoading) {
+                        Spacer(Modifier.height(8.dp))
+                        LinearProgressIndicator(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(6.dp)
+                                .clip(RoundedCornerShape(999.dp)),
+                            color = GymRankColors.PrimaryAccent,
+                            trackColor = DesignTokens.Colors.SurfaceInputs
+                        )
+                    }
+                    Spacer(Modifier.height(10.dp))
+                }
+            }
+        }
+    }
+
+    // ============================
+    // ✅ BottomSheet: Perfil
+    // ============================
+    if (showProfileSheet) {
+        ModalBottomSheet(
+            onDismissRequest = { showProfileSheet = false },
+            sheetState = profileSheetState
+        ) {
+            Surface(color = DesignTokens.Colors.SurfaceElevated) {
+                ProfileSheetContent(
+                    username = profileUsername.ifBlank { profileName.ifBlank { uiState.userName } },
+                    experience = profileExperience,
+                    gender = profileGender,
+                    fullName = profileFullName,
+                    photoUrl = profilePhotoUrl,
+                    isUploadingPhoto = isUploadingPhoto,
+                    uploadPhotoError = uploadPhotoError,
+                    onClose = {
+                        scope.launch {
+                            profileSheetState.hide()
+                            showProfileSheet = false
+                        }
+                    },
+                    onPickPhoto = {
+                        pickImageLauncher.launch(
+                            PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+                        )
+                    },
+                    onSave = { newName, newExperience, newGender ->
+                        if (uid.isBlank()) return@ProfileSheetContent
+                        scope.launch {
+                            runCatching {
+                                db.collection("users").document(uid).update(
+                                    mapOf(
+                                        "name" to newName,
+                                        "experience" to newExperience,
+                                        "gender" to newGender,
+                                        "updatedAt" to System.currentTimeMillis()
+                                    )
+                                ).await()
+                            }.onSuccess {
+                                profileFullName = newName
+                                profileExperience = newExperience
+                                profileGender = newGender
+                                profileName = newName.ifBlank { profileUsername.ifBlank { uiState.userName } }
+                            }
+                        }
+                    },
+                    onOpenFriendRequests = {
+                        // ✅ FIX parpadeo: primero cerramos sheet y luego navegamos
+                        scope.launch {
+                            profileSheetState.hide()
+                            showProfileSheet = false
+                            delay(80)
+                            onOpenFriendRequests()
+                        }
+                    },
+                    onLogoutConfirmed = {
+                        // ✅ confirmación ya se hace dentro del sheet
+                        scope.launch {
+                            profileSheetState.hide()
+                            showProfileSheet = false
+                            delay(80)
+                            onLogout()
+                        }
+                    }
+                )
             }
         }
     }
@@ -463,10 +592,7 @@ fun HomeScreen(
             HomeTopBar(
                 userName = if (profileName.isNotBlank()) profileName else uiState.userName,
                 onOpenRanking = onOpenRanking,
-                onLogout = onLogout,
-                feedVisibilityLabel = feedVisibility.labelEs(),
-                onOpenPrivacy = { showPrivacySheet = true },
-                onOpenFriendRequests = onOpenFriendRequests // ✅ NUEVO
+                onOpenProfile = { showProfileSheet = true }
             )
         }
 
@@ -562,63 +688,32 @@ private fun PrivacyOptionRow(
 }
 
 // ============================================
-// TOP BAR
+// TOP BAR (abre Perfil)
 // ============================================
-
 @Composable
 private fun HomeTopBar(
     userName: String,
     onOpenRanking: () -> Unit,
-    onLogout: () -> Unit,
-    feedVisibilityLabel: String,
-    onOpenPrivacy: () -> Unit,
-    onOpenFriendRequests: () -> Unit // ✅ NUEVO
+    onOpenProfile: () -> Unit
 ) {
-    var showLogoutDialog by remember { mutableStateOf(false) }
-    var menuExpanded by remember { mutableStateOf(false) }
-
-    if (showLogoutDialog) {
-        AlertDialog(
-            onDismissRequest = { showLogoutDialog = false },
-            title = { Text("Cerrar sesión") },
-            text = { Text("¿Querés cerrar sesión ahora?") },
-            confirmButton = {
-                TextButton(
-                    onClick = {
-                        showLogoutDialog = false
-                        onLogout()
-                    }
-                ) { Text("Sí, cerrar sesión") }
-            },
-            dismissButton = {
-                TextButton(onClick = { showLogoutDialog = false }) { Text("Cancelar") }
-            }
-        )
-    }
-
     TopAppBar(
         title = {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = "Hola 👋",
-                        fontSize = 28.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = DesignTokens.Colors.TextPrimary,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                    Text(
-                        text = if (userName.isNotBlank()) userName else " ",
-                        fontSize = 12.sp,
-                        color = DesignTokens.Colors.TextSecondary,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                }
+            Column {
+                Text(
+                    text = "Hola 👋",
+                    fontSize = 28.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = DesignTokens.Colors.TextPrimary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Text(
+                    text = if (userName.isNotBlank()) userName else " ",
+                    fontSize = 12.sp,
+                    color = DesignTokens.Colors.TextSecondary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
             }
         },
         actions = {
@@ -629,105 +724,306 @@ private fun HomeTopBar(
                     tint = DesignTokens.Colors.TextPrimary
                 )
             }
-
             Spacer(Modifier.width(8.dp))
+            IconButton(onClick = onOpenProfile) {
+                Icon(
+                    imageVector = Icons.Default.Person,
+                    contentDescription = "Perfil",
+                    tint = GymRankColors.PrimaryAccent
+                )
+            }
+        },
+        colors = TopAppBarDefaults.topAppBarColors(containerColor = DesignTokens.Colors.BackgroundBase)
+    )
+}
 
-            Box {
-                Box(
-                    modifier = Modifier
-                        .size(40.dp)
-                        .clip(CircleShape)
-                        .background(DesignTokens.Colors.SurfaceElevated)
-                        .border(1.dp, DesignTokens.Colors.SurfaceInputs, CircleShape)
-                        .clickable { menuExpanded = true },
-                    contentAlignment = Alignment.Center
-                ) {
+// ============================================
+// PERFIL SHEET CONTENT
+// ============================================
+
+@Composable
+private fun ProfileSheetContent(
+    username: String,
+    experience: String,
+    gender: String,
+    fullName: String,
+    photoUrl: String?,
+    isUploadingPhoto: Boolean,
+    uploadPhotoError: String?,
+    onClose: () -> Unit,
+    onPickPhoto: () -> Unit,
+    onSave: (String, String, String) -> Unit,
+    onOpenFriendRequests: () -> Unit,
+    onLogoutConfirmed: () -> Unit
+) {
+    var nameState by remember { mutableStateOf(fullName) }
+    var experienceState by remember { mutableStateOf(experience) }
+    var genderState by remember { mutableStateOf(gender) }
+
+    var expExpanded by remember { mutableStateOf(false) }
+    var genderExpanded by remember { mutableStateOf(false) }
+    var showLogoutConfirm by remember { mutableStateOf(false) }
+
+    val expOptions = listOf("Principiante", "Intermedio", "Avanzado")
+    val genderOptions = listOf("Masculino", "Femenino", "Otro")
+
+    if (showLogoutConfirm) {
+        AlertDialog(
+            onDismissRequest = { showLogoutConfirm = false },
+            title = { Text("Cerrar sesión") },
+            text = { Text("¿Seguro que querés cerrar sesión?") },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        showLogoutConfirm = false
+                        onLogoutConfirmed()
+                    }
+                ) { Text("Sí, cerrar") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showLogoutConfirm = false }) { Text("Cancelar") }
+            }
+        )
+    }
+
+    val scrollState = rememberScrollState()
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .verticalScroll(scrollState)   // ✅ ahora scrollea en celular
+            .navigationBarsPadding()       // ✅ evita quedar tapado por barra de abajo
+            .padding(16.dp)
+    ) {
+        // Header: Perfil + X
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = "Perfil",
+                fontSize = 18.sp,
+                fontWeight = FontWeight.Bold,
+                color = DesignTokens.Colors.TextPrimary,
+                modifier = Modifier.weight(1f)
+            )
+            IconButton(onClick = onClose) {
+                Icon(
+                    imageVector = Icons.Default.Close,
+                    contentDescription = "Cerrar",
+                    tint = DesignTokens.Colors.TextPrimary
+                )
+            }
+        }
+
+        Spacer(Modifier.height(12.dp))
+
+        // Usuario + cambiar foto
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(18.dp))
+                .background(DesignTokens.Colors.SurfaceElevated)
+                .border(1.dp, DesignTokens.Colors.SurfaceInputs, RoundedCornerShape(18.dp))
+                .padding(14.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(52.dp)
+                    .clip(CircleShape)
+                    .background(DesignTokens.Colors.SurfaceInputs),
+                contentAlignment = Alignment.Center
+            ) {
+                if (!photoUrl.isNullOrBlank()) {
+                    AsyncImage(
+                        model = photoUrl,
+                        contentDescription = "Foto de perfil",
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .clip(CircleShape)
+                    )
+                } else {
                     Icon(
                         imageVector = Icons.Default.Person,
-                        contentDescription = "Usuario",
-                        tint = GymRankColors.PrimaryAccent
-                    )
-                }
-
-                DropdownMenu(
-                    expanded = menuExpanded,
-                    onDismissRequest = { menuExpanded = false },
-                    offset = DpOffset(x = (-8).dp, y = 10.dp),
-                    modifier = Modifier
-                        .widthIn(min = 190.dp)
-                        .clip(RoundedCornerShape(16.dp))
-                        .background(DesignTokens.Colors.SurfaceElevated)
-                        .border(1.dp, DesignTokens.Colors.SurfaceInputs, RoundedCornerShape(16.dp))
-                        .padding(vertical = 4.dp)
-                ) {
-                    DropdownMenuItem(
-                        text = { Text("Perfil ($feedVisibilityLabel)") },
-                        leadingIcon = {
-                            Icon(
-                                imageVector = Icons.Default.Tune,
-                                contentDescription = null,
-                                tint = GymRankColors.PrimaryAccent
-                            )
-                        },
-                        onClick = {
-                            menuExpanded = false
-                            onOpenPrivacy()
-                        },
-                        colors = MenuDefaults.itemColors(
-                            textColor = DesignTokens.Colors.TextPrimary,
-                            leadingIconColor = GymRankColors.PrimaryAccent
-                        )
-                    )
-
-                    // ✅ NUEVO: Friend Requests
-                    DropdownMenuItem(
-                        text = { Text("Solicitudes de amistad") },
-                        leadingIcon = {
-                            Icon(
-                                imageVector = Icons.Default.GroupAdd,
-                                contentDescription = null,
-                                tint = GymRankColors.PrimaryAccent
-                            )
-                        },
-                        onClick = {
-                            menuExpanded = false
-                            onOpenFriendRequests()
-                        },
-                        colors = MenuDefaults.itemColors(
-                            textColor = DesignTokens.Colors.TextPrimary,
-                            leadingIconColor = GymRankColors.PrimaryAccent
-                        )
-                    )
-
-                    HorizontalDivider(color = DesignTokens.Colors.SurfaceInputs)
-
-                    DropdownMenuItem(
-                        text = { Text("Cerrar sesión") },
-                        leadingIcon = {
-                            Icon(
-                                imageVector = Icons.Default.Logout,
-                                contentDescription = null,
-                                tint = GymRankColors.PrimaryAccent
-                            )
-                        },
-                        onClick = {
-                            menuExpanded = false
-                            showLogoutDialog = true
-                        },
-                        colors = MenuDefaults.itemColors(
-                            textColor = DesignTokens.Colors.TextPrimary,
-                            leadingIconColor = GymRankColors.PrimaryAccent
-                        )
+                        contentDescription = null,
+                        tint = DesignTokens.Colors.TextSecondary
                     )
                 }
             }
 
-            Spacer(Modifier.width(10.dp))
-        },
-        colors = TopAppBarDefaults.topAppBarColors(
-            containerColor = DesignTokens.Colors.BackgroundBase
+            Spacer(Modifier.width(12.dp))
+
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = username.ifBlank { "—" },
+                    fontWeight = FontWeight.Bold,
+                    color = DesignTokens.Colors.TextPrimary
+                )
+                Text(
+                    text = experienceState,
+                    fontSize = 12.sp,
+                    color = DesignTokens.Colors.TextSecondary
+                )
+            }
+
+            OutlinedButton(
+                onClick = { if (!isUploadingPhoto) onPickPhoto() },
+                shape = RoundedCornerShape(999.dp),
+                border = BorderStroke(1.dp, GymRankColors.PrimaryAccent.copy(alpha = 0.45f))
+            ) {
+                Text(
+                    if (isUploadingPhoto) "Subiendo..." else "Cambiar foto",
+                    color = GymRankColors.PrimaryAccent
+                )
+            }
+        }
+
+        if (!uploadPhotoError.isNullOrBlank()) {
+            Spacer(Modifier.height(8.dp))
+            Text(uploadPhotoError, color = GymRankColors.Error, fontSize = 12.sp)
+        }
+
+        Spacer(Modifier.height(14.dp))
+
+        Text("Nombre", color = DesignTokens.Colors.TextSecondary, fontSize = 12.sp)
+        Spacer(Modifier.height(6.dp))
+        OutlinedTextField(
+            value = nameState,
+            onValueChange = { nameState = it },
+            modifier = Modifier.fillMaxWidth(),
+            singleLine = true,
+            placeholder = { Text("Tu nombre") }
         )
-    )
+
+        Spacer(Modifier.height(12.dp))
+
+        Text("Experiencia", color = DesignTokens.Colors.TextSecondary, fontSize = 12.sp)
+        Spacer(Modifier.height(6.dp))
+        ExposedDropdownMenuBox(
+            expanded = expExpanded,
+            onExpandedChange = { expExpanded = !expExpanded }
+        ) {
+            OutlinedTextField(
+                value = experienceState,
+                onValueChange = {},
+                readOnly = true,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .menuAnchor(),
+                trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expExpanded) }
+            )
+            ExposedDropdownMenu(
+                expanded = expExpanded,
+                onDismissRequest = { expExpanded = false }
+            ) {
+                expOptions.forEach { opt ->
+                    DropdownMenuItem(
+                        text = { Text(opt) },
+                        onClick = {
+                            experienceState = opt
+                            expExpanded = false
+                        }
+                    )
+                }
+            }
+        }
+
+        Spacer(Modifier.height(12.dp))
+
+        Text("Género", color = DesignTokens.Colors.TextSecondary, fontSize = 12.sp)
+        Spacer(Modifier.height(6.dp))
+        ExposedDropdownMenuBox(
+            expanded = genderExpanded,
+            onExpandedChange = { genderExpanded = !genderExpanded }
+        ) {
+            OutlinedTextField(
+                value = genderState,
+                onValueChange = {},
+                readOnly = true,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .menuAnchor(),
+                trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = genderExpanded) }
+            )
+            ExposedDropdownMenu(
+                expanded = genderExpanded,
+                onDismissRequest = { genderExpanded = false }
+            ) {
+                genderOptions.forEach { opt ->
+                    DropdownMenuItem(
+                        text = { Text(opt) },
+                        onClick = {
+                            genderState = opt
+                            genderExpanded = false
+                        }
+                    )
+                }
+            }
+        }
+
+        Spacer(Modifier.height(16.dp))
+
+        Button(
+            onClick = { onSave(nameState, experienceState, genderState) },
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(52.dp),
+            shape = RoundedCornerShape(999.dp),
+            colors = ButtonDefaults.buttonColors(containerColor = GymRankColors.PrimaryAccent)
+        ) {
+            Text("GUARDAR CAMBIOS", color = Color.Black, fontWeight = FontWeight.Bold)
+        }
+
+        Spacer(Modifier.height(14.dp))
+
+        // Solicitudes
+        GlassCard(modifier = Modifier.fillMaxWidth()) {
+            Text(
+                text = "Solicitudes de amistad",
+                fontWeight = FontWeight.Bold,
+                color = DesignTokens.Colors.TextPrimary
+            )
+            Spacer(Modifier.height(6.dp))
+            Text(
+                text = "No tenés solicitudes pendientes.",
+                color = DesignTokens.Colors.TextSecondary,
+                fontSize = 12.sp
+            )
+            Spacer(Modifier.height(10.dp))
+
+            OutlinedButton(
+                onClick = onOpenFriendRequests,
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(16.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Default.GroupAdd,
+                    contentDescription = null,
+                    tint = GymRankColors.PrimaryAccent
+                )
+                Spacer(Modifier.width(10.dp))
+                Text("Ver solicitudes", color = GymRankColors.PrimaryAccent, fontWeight = FontWeight.SemiBold)
+            }
+        }
+
+        Spacer(Modifier.height(12.dp))
+
+        // Cerrar sesión (con confirmación)
+        OutlinedButton(
+            onClick = { showLogoutConfirm = true },
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(56.dp),
+            shape = RoundedCornerShape(16.dp)
+        ) {
+            Icon(Icons.Default.Logout, contentDescription = null, tint = GymRankColors.PrimaryAccent)
+            Spacer(Modifier.width(10.dp))
+            Text("Cerrar sesión", color = GymRankColors.PrimaryAccent, fontWeight = FontWeight.SemiBold)
+        }
+
+        Spacer(Modifier.height(16.dp))
+    }
 }
 
 // ============================================
@@ -1169,10 +1465,7 @@ private fun RoutineChipsTwoColumns(items: List<String>) {
         maxItemsInEachRow = 2
     ) {
         items.forEach { label ->
-            RoutineChip(
-                label = label,
-                modifier = Modifier.fillMaxWidth(0.48f)
-            )
+            RoutineChip(label = label, modifier = Modifier.fillMaxWidth(0.48f))
         }
     }
 }
@@ -1321,9 +1614,7 @@ private fun SetsGrid3Columns(
                         SetGridCard(name = name, value = value, max = maxVal)
                     }
                 }
-
-                val missing = 3 - row.size
-                repeat(missing) { Spacer(modifier = Modifier.weight(1f)) }
+                repeat(3 - row.size) { Spacer(modifier = Modifier.weight(1f)) }
             }
         }
     }
@@ -1492,26 +1783,27 @@ private fun buildMuscleCountsFromRoutinePlan(
     muscles: List<String>
 ): Pair<Map<com.example.gymrank.ui.components.MuscleId, Int>, Map<com.example.gymrank.ui.components.MuscleId, Int>> {
 
-    fun canonToMuscleId(name: String): com.example.gymrank.ui.components.MuscleId? = when (name.trim().lowercase(Locale.getDefault())) {
-        "pecho", "pectorales", "pectoral" -> com.example.gymrank.ui.components.MuscleId.Chest
-        "abdomen", "abs", "core" -> com.example.gymrank.ui.components.MuscleId.Abs
-        "oblicuos", "oblicuo", "obliques" -> com.example.gymrank.ui.components.MuscleId.Obliques
-        "biceps", "bíceps", "bicep" -> com.example.gymrank.ui.components.MuscleId.Biceps
-        "antebrazos", "antebrazo", "forearms", "forearm" -> com.example.gymrank.ui.components.MuscleId.Forearms
-        "cuadriceps", "cuádriceps", "quads", "quadriceps", "piernas" -> com.example.gymrank.ui.components.MuscleId.Quads
-        "pantorrillas", "pantorrilla", "gemelos", "calves", "calf" -> com.example.gymrank.ui.components.MuscleId.Calves
+    fun canonToMuscleId(name: String): com.example.gymrank.ui.components.MuscleId? =
+        when (name.trim().lowercase(Locale.getDefault())) {
+            "pecho", "pectorales", "pectoral" -> com.example.gymrank.ui.components.MuscleId.Chest
+            "abdomen", "abs", "core" -> com.example.gymrank.ui.components.MuscleId.Abs
+            "oblicuos", "oblicuo", "obliques" -> com.example.gymrank.ui.components.MuscleId.Obliques
+            "biceps", "bíceps", "bicep" -> com.example.gymrank.ui.components.MuscleId.Biceps
+            "antebrazos", "antebrazo", "forearms", "forearm" -> com.example.gymrank.ui.components.MuscleId.Forearms
+            "cuadriceps", "cuádriceps", "quads", "quadriceps", "piernas" -> com.example.gymrank.ui.components.MuscleId.Quads
+            "pantorrillas", "pantorrilla", "gemelos", "calves", "calf" -> com.example.gymrank.ui.components.MuscleId.Calves
 
-        "hombros", "deltoides", "deltoide", "shoulders" -> com.example.gymrank.ui.components.MuscleId.Shoulders
-        "trapecios", "trapecio", "traps", "trap" -> com.example.gymrank.ui.components.MuscleId.Traps
+            "hombros", "deltoides", "deltoide", "shoulders" -> com.example.gymrank.ui.components.MuscleId.Shoulders
+            "trapecios", "trapecio", "traps", "trap" -> com.example.gymrank.ui.components.MuscleId.Traps
 
-        "triceps", "tríceps", "tricep" -> com.example.gymrank.ui.components.MuscleId.Triceps
-        "espalda", "back" -> com.example.gymrank.ui.components.MuscleId.Back
-        "dorsales", "dorsal", "lats", "dorsal ancho" -> com.example.gymrank.ui.components.MuscleId.Lats
-        "lumbar", "lumbares", "lower back", "espalda baja" -> com.example.gymrank.ui.components.MuscleId.LowerBack
-        "gluteos", "glúteos", "glutes", "glute" -> com.example.gymrank.ui.components.MuscleId.Glutes
-        "isquios", "isquiotibiales", "hamstrings", "femorales" -> com.example.gymrank.ui.components.MuscleId.Hamstrings
-        else -> null
-    }
+            "triceps", "tríceps", "tricep" -> com.example.gymrank.ui.components.MuscleId.Triceps
+            "espalda", "back" -> com.example.gymrank.ui.components.MuscleId.Back
+            "dorsales", "dorsal", "lats", "dorsal ancho" -> com.example.gymrank.ui.components.MuscleId.Lats
+            "lumbar", "lumbares", "lower back", "espalda baja" -> com.example.gymrank.ui.components.MuscleId.LowerBack
+            "gluteos", "glúteos", "glutes", "glute" -> com.example.gymrank.ui.components.MuscleId.Glutes
+            "isquios", "isquiotibiales", "hamstrings", "femorales" -> com.example.gymrank.ui.components.MuscleId.Hamstrings
+            else -> null
+        }
 
     val front = mutableMapOf<com.example.gymrank.ui.components.MuscleId, Int>()
     val back = mutableMapOf<com.example.gymrank.ui.components.MuscleId, Int>()
@@ -1526,9 +1818,7 @@ private fun buildMuscleCountsFromRoutinePlan(
                 com.example.gymrank.ui.components.MuscleId.Shoulders,
                 com.example.gymrank.ui.components.MuscleId.Traps,
                 com.example.gymrank.ui.components.MuscleId.Forearms,
-                com.example.gymrank.ui.components.MuscleId.Calves -> {
-                    incFront(id); incBack(id)
-                }
+                com.example.gymrank.ui.components.MuscleId.Calves -> { incFront(id); incBack(id) }
 
                 com.example.gymrank.ui.components.MuscleId.Chest,
                 com.example.gymrank.ui.components.MuscleId.Abs,

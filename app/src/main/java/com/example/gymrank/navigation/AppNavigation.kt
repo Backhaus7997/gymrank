@@ -52,6 +52,7 @@ import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.SetOptions
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.tasks.await
+import com.example.gymrank.ui.screens.home.profile.ProfileScreen
 
 private const val FLOW_LOGIN = "login"
 private const val FLOW_SIGNUP = "signup"
@@ -319,7 +320,8 @@ fun AppNavigation(sessionViewModel: SessionViewModel) {
                     onLogWorkout = { navigateToCreateRoutine() },
                     onOpenRanking = { navigateToRankingTab() },
                     onLogout = { doLogout() },
-                    onOpenFriendRequests = { navController.navigate("friends/requests") }
+                    onOpenFriendRequests = { navController.navigate("friends/requests") },
+                    onOpenProfile = { navController.navigate("profile") }
                 )
             }
 
@@ -397,6 +399,14 @@ fun AppNavigation(sessionViewModel: SessionViewModel) {
             // ✅ NUEVO: FRIEND REQUESTS
             composable("friends/requests") {
                 FriendRequestsScreen(onBack = { navController.popBackStack() })
+            }
+
+            composable("profile") {
+                ProfileScreen(
+                    onClose = { navController.popBackStack() },
+                    onOpenFriendRequests = { navController.navigate("friends/requests") },
+                    onLogout = { doLogout() }
+                )
             }
 
             // ✅ SUBSCREENS CHALLENGES
