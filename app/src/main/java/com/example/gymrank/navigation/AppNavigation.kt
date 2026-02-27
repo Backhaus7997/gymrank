@@ -28,7 +28,7 @@ import com.example.gymrank.ui.screens.challenges.subscreens.GambleScreen
 import com.example.gymrank.ui.screens.challenges.subscreens.QuestsScreen
 import com.example.gymrank.ui.screens.feed.FeedScreen
 import com.example.gymrank.ui.screens.feed.subscreens.WorkoutDetailScreen
-import com.example.gymrank.ui.screens.friendrequests.FriendRequestsScreen // ✅ NUEVO
+import com.example.gymrank.ui.screens.friendrequests.FriendRequestsScreen
 import com.example.gymrank.ui.screens.home.HomeScreen
 import com.example.gymrank.ui.screens.loadworkout.LoadWorkoutScreen
 import com.example.gymrank.ui.screens.login.LoginScreen
@@ -53,6 +53,7 @@ import com.google.firebase.firestore.SetOptions
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.tasks.await
 import com.example.gymrank.ui.screens.home.profile.ProfileScreen
+import com.example.gymrank.ui.screens.feed.subscreens.UserWorkoutsScreen
 
 private const val FLOW_LOGIN = "login"
 private const val FLOW_SIGNUP = "signup"
@@ -237,6 +238,27 @@ fun AppNavigation(sessionViewModel: SessionViewModel) {
                 )
             }
 
+            composable("feed/user_workouts/{ownerUid}") { entry ->
+                val ownerUid = entry.arguments?.getString("ownerUid").orEmpty()
+                UserWorkoutsScreen(
+                    ownerUid = ownerUid,
+                    onBack = { navController.popBackStack() },
+                    onOpenWorkoutDetail = { workoutId ->
+                        navController.navigate("feed/workout_detail/$ownerUid/$workoutId")
+                    }
+                )
+            }
+
+            composable("feed/workout_detail/{ownerUid}/{workoutId}") { entry ->
+                val ownerUid = entry.arguments?.getString("ownerUid").orEmpty()
+                val workoutId = entry.arguments?.getString("workoutId").orEmpty()
+                WorkoutDetailScreen(
+                    ownerUid = ownerUid,
+                    workoutId = workoutId,
+                    onBack = { navController.popBackStack() }
+                )
+            }
+
             // ✅ LOGIN con signup abierto
             composable("login_signup") {
                 val userRepo = remember { UserRepositoryImpl() }
@@ -327,8 +349,8 @@ fun AppNavigation(sessionViewModel: SessionViewModel) {
 
             composable("feed") {
                 FeedScreen(
-                    onOpenWorkout = { ownerUid, workoutId ->
-                        navController.navigate("workout/detail/$ownerUid/$workoutId")
+                    onOpenUserWorkouts = { ownerUid ->
+                        navController.navigate("feed/user_workouts/$ownerUid")
                     }
                 )
             }
