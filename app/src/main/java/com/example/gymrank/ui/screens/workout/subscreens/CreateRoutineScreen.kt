@@ -706,7 +706,7 @@ fun CreateRoutineScreen(
 
                         Row(
                             modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             dayLabelsShort.forEachIndexed { idx, label ->
@@ -714,6 +714,7 @@ fun CreateRoutineScreen(
                                 val isSelected = idx == selectedDayIndex
 
                                 DayPillSelectable(
+                                    modifier = Modifier.weight(1f),
                                     day = label,
                                     isToday = isToday,
                                     isSelected = isSelected,
@@ -1347,6 +1348,7 @@ private fun ExerciseDropdownField(
 
 @Composable
 private fun DayPillSelectable(
+    modifier: Modifier = Modifier,
     day: String,
     isToday: Boolean,
     isSelected: Boolean,
@@ -1370,16 +1372,20 @@ private fun DayPillSelectable(
     }
 
     Box(
-        modifier = Modifier
-            .height(44.dp)
-            .width(48.dp)
-            .clip(RoundedCornerShape(14.dp))
+        modifier = modifier
+            .height(40.dp)
+            .clip(RoundedCornerShape(12.dp))
             .background(bg)
-            .border(1.dp, stroke, RoundedCornerShape(14.dp))
+            .border(1.dp, stroke, RoundedCornerShape(12.dp))
             .clickable { onClick() },
         contentAlignment = Alignment.Center
     ) {
-        Text(text = day, color = txt, fontWeight = FontWeight.SemiBold)
+        Text(
+            text = day,
+            color = txt,
+            fontWeight = FontWeight.SemiBold,
+            fontSize = 14.sp
+        )
     }
 }
 

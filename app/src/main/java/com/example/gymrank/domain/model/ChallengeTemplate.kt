@@ -4,8 +4,9 @@ data class ChallengeTemplate(
     val id: String = "",
     val title: String = "",
     val subtitle: String = "",
-    val level: String = "",        // Principiante/Intermedio/Avanzado/Experto
-    val durationDays: Int = 0,     // 10, 14, 21, 30, etc.
+    val level: String = "",
+    val durationDays: Int = 0,
+    val points: Int = 0,
     val imageUrl: String? = null,
     val tags: List<String> = emptyList(),
     val isActive: Boolean = true,

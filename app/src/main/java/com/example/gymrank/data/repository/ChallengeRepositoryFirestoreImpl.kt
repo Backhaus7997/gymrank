@@ -44,7 +44,6 @@ class ChallengeRepositoryFirestoreImpl(
 
     override suspend fun acceptChallenge(uid: String, templateId: String): UserChallenge {
         return try {
-            // Si ya existe ACTIVE para ese template, devolvémoslo (evita duplicados)
             val existing = userChallengesCol
                 .whereEqualTo("uid", uid)
                 .whereEqualTo("templateId", templateId)
@@ -65,7 +64,7 @@ class ChallengeRepositoryFirestoreImpl(
             }
 
             val now = System.currentTimeMillis()
-            val ref = userChallengesCol.document() // id random
+            val ref = userChallengesCol.document()
             val data = mapOf(
                 "uid" to uid,
                 "templateId" to templateId,
@@ -99,7 +98,6 @@ class ChallengeRepositoryFirestoreImpl(
         return try {
             if (statuses.isEmpty()) return emptyList()
 
-            // Firestore IN soporta hasta 10 items (nosotros usamos 3)
             val statusNames = statuses.map { it.name }
 
             val snap = userChallengesCol
@@ -125,7 +123,6 @@ class ChallengeRepositoryFirestoreImpl(
             val now = System.currentTimeMillis()
             val ref = userChallengesCol.document(userChallengeId)
 
-            // seguridad mínima: chequeamos que el doc sea del uid
             val current = ref.get().await()
             if (!current.exists()) throw IllegalStateException("Desafío no encontrado")
             val docUid = current.getString("uid").orEmpty()
@@ -138,7 +135,6 @@ class ChallengeRepositoryFirestoreImpl(
 
             when (status) {
                 ChallengeStatus.ACTIVE -> {
-                    // no tocamos completedAt/canceledAt
                     if (current.getLong("startedAt") == null) patch["startedAt"] = now
                 }
                 ChallengeStatus.COMPLETED -> patch["completedAt"] = now
@@ -147,7 +143,6 @@ class ChallengeRepositoryFirestoreImpl(
 
             ref.set(patch, SetOptions.merge()).await()
 
-            // devolvemos objeto actualizado
             val after = ref.get().await()
             after.toUserChallengeOrNull()
                 ?: UserChallenge(
@@ -170,12 +165,19 @@ class ChallengeRepositoryFirestoreImpl(
             val createdAtMillis = getTimestamp("createdAt")?.toDate()?.time
             val updatedAtMillis = getTimestamp("updatedAt")?.toDate()?.time
 
+            // ✅ points puede venir como Number o como String ("200")
+            val pointsInt =
+                (getLong("points")?.toInt())
+                    ?: getString("points")?.toIntOrNull()
+                    ?: 0
+
             ChallengeTemplate(
                 id = id,
                 title = getString("title").orEmpty(),
                 subtitle = getString("subtitle").orEmpty(),
                 level = getString("level").orEmpty(),
                 durationDays = (getLong("durationDays") ?: 0L).toInt(),
+                points = pointsInt,
                 imageUrl = getString("imageUrl"),
                 tags = (get("tags") as? List<*>)?.mapNotNull { it as? String } ?: emptyList(),
                 isActive = getBoolean("isActive") ?: true,
