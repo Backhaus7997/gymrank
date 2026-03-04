@@ -37,6 +37,25 @@ class UserRepositoryImpl(
             .await()
     }
 
+    // ✅ NUEVO: continuar sin vincular gym -> deja esos campos "vacíos"
+    // Recomendado: BORRAR campos (quedan inexistentes)
+    suspend fun clearSelectedGym() {
+        val uid = requireUid()
+
+        val updates: Map<String, Any?> = mapOf(
+            "gymId" to FieldValue.delete(),
+            "gymNameCache" to FieldValue.delete(),
+            "gymCityCache" to FieldValue.delete(),
+            "gymSelectedAt" to FieldValue.delete(),
+            "updatedAt" to FieldValue.serverTimestamp()
+        )
+
+        db.collection("users")
+            .document(uid)
+            .set(updates, SetOptions.merge())
+            .await()
+    }
+
     suspend fun getSelectedGym(): Gym? {
         val uid = auth.currentUser?.uid ?: return null
 
@@ -62,7 +81,6 @@ class UserRepositoryImpl(
 
     /**
      * ✅ Guardamos onboarding + seteamos default de privacidad de feed si es primera vez.
-     * (Como es onboarding, normalmente se llama una sola vez).
      */
     suspend fun saveOnboarding(
         username: String,
@@ -92,18 +110,12 @@ class UserRepositoryImpl(
             .await()
     }
 
-    /**
-     * ✅ Lee privacidad del perfil (PUBLIC | FRIENDS | PRIVATE)
-     */
     suspend fun getMyFeedVisibility(): String {
         val uid = auth.currentUser?.uid ?: return DEFAULT_FEED_VISIBILITY
         val doc = db.collection("users").document(uid).get().await()
         return doc.getString("feedVisibility")?.trim()?.uppercase() ?: DEFAULT_FEED_VISIBILITY
     }
 
-    /**
-     * ✅ Actualiza privacidad del perfil (PUBLIC | FRIENDS | PRIVATE)
-     */
     suspend fun updateMyFeedVisibility(value: String) {
         val uid = requireUid()
         val v = value.trim().uppercase()
@@ -121,7 +133,6 @@ class UserRepositoryImpl(
             .await()
     }
 
-    // ✅ Perfil (sin Firebase Storage): guardamos photoBase64 en el doc del user
     data class MyProfileData(
         val uid: String,
         val username: String,
@@ -139,8 +150,6 @@ class UserRepositoryImpl(
         val experience = doc.getString("experience")?.trim().orEmpty().ifBlank { "Intermedio" }
         val gender = doc.getString("gender")?.trim().orEmpty().ifBlank { "Otro" }
 
-        // en tu DB actual: feedVisibility (lo vi en tu screenshot)
-        // y en tu código Home: feedVisibility
         val feedVisibility = doc.getString("feedVisibility")?.trim()?.uppercase()
             ?: DEFAULT_FEED_VISIBILITY
 
@@ -177,7 +186,6 @@ class UserRepositoryImpl(
             "updatedAt" to FieldValue.serverTimestamp()
         )
 
-        // si viene null, NO pisamos la foto; si viene string, actualizamos
         if (photoBase64 != null) {
             updates["photoBase64"] = photoBase64
         }

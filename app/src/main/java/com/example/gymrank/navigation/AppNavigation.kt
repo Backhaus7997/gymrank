@@ -260,6 +260,27 @@ fun AppNavigation(sessionViewModel: SessionViewModel) {
             composable(Screen.SelectGym.route) {
                 val userRepo = remember { UserRepositoryImpl() }
 
+                // ✅ Decide por DB (profileCompleted), no por flags en memoria
+                suspend fun destinationAfterGymChoice(): String {
+                    return runCatching {
+                        val uid = FirebaseAuth.getInstance().currentUser?.uid.orEmpty()
+                        if (uid.isBlank()) return@runCatching Screen.Home.route
+
+                        val snap = FirebaseFirestore.getInstance()
+                            .collection("users")
+                            .document(uid)
+                            .get()
+                            .await()
+
+                        val completed = snap.getBoolean("profileCompleted") == true
+                        if (completed) Screen.Home.route else Screen.Onboarding.route
+                    }.getOrElse {
+                        // si falla por red o lo que sea, por default mostramos onboarding
+                        // (mejor que dejar al user sin completar perfil)
+                        Screen.Onboarding.route
+                    }
+                }
+
                 SelectGymScreen(
                     onGymSelected = { gym: Gym ->
                         coroutineScope.launch {
@@ -268,9 +289,19 @@ fun AppNavigation(sessionViewModel: SessionViewModel) {
 
                             runCatching { sessionViewModel.selectGym(gym) }
 
-                            val destination =
-                                if (shouldShowOnboarding) Screen.Onboarding.route
-                                else Screen.Home.route
+                            val destination = destinationAfterGymChoice()
+
+                            navController.navigate(destination) {
+                                popUpTo(Screen.Welcome.route) { inclusive = true }
+                                launchSingleTop = true
+                            }
+                        }
+                    },
+                    onContinueWithoutGym = {
+                        coroutineScope.launch {
+                            // ✅ NO limpiar acá (ya se limpia en SelectGymScreen -> viewModel.continueWithoutGym)
+
+                            val destination = destinationAfterGymChoice()
 
                             navController.navigate(destination) {
                                 popUpTo(Screen.Welcome.route) { inclusive = true }
@@ -288,6 +319,13 @@ fun AppNavigation(sessionViewModel: SessionViewModel) {
                         shouldShowOnboarding = false
                         navController.navigate(Screen.Home.route) {
                             popUpTo(Screen.Welcome.route) { inclusive = true }
+                            launchSingleTop = true
+                        }
+                    },
+                    onBackToSelectGym = {
+                        // ✅ volver a elegir gym (sin tocar Welcome)
+                        navController.navigate(Screen.SelectGym.route) {
+                            popUpTo(Screen.SelectGym.route) { inclusive = true }
                             launchSingleTop = true
                         }
                     }

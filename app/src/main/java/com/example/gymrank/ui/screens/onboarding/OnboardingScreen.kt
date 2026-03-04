@@ -45,7 +45,8 @@ enum class SimpleStep { USERNAME, DOB, WEIGHT, HEIGHT, GENDER, EXPERIENCE }
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun OnboardingScreen(
-    onFinished: () -> Unit
+    onFinished: () -> Unit,
+    onBackToSelectGym: () -> Unit
 ) {
     Log.d("ONBOARDING_UI", "USING ui/screens/onboarding/OnboardingScreen.kt")
 
@@ -415,6 +416,7 @@ fun OnboardingScreen(
             }
 
             // Bottom CTAs
+            // Bottom CTAs
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -422,12 +424,25 @@ fun OnboardingScreen(
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                val canGoBack = currentStep != SimpleStep.USERNAME
+                val isFirstStep = currentStep == SimpleStep.USERNAME
+                val canGoBack = true // ✅ ahora siempre se puede volver (en username vuelve a SelectGym)
 
                 Box(modifier = Modifier.alpha(if (canGoBack) 1f else 0.45f)) {
                     SecondaryTextButton(
                         text = "Volver",
-                        onClick = { if (canGoBack && !isSaving) goBack() }
+                        onClick = {
+                            if (isSaving) return@SecondaryTextButton
+
+                            errorMsg = null
+
+                            if (isFirstStep) {
+                                // ✅ en el primer paso, volvés a SelectGym
+                                onBackToSelectGym()
+                            } else {
+                                // ✅ en los otros pasos, vuelve al step anterior
+                                goBack()
+                            }
+                        }
                     )
                 }
 
