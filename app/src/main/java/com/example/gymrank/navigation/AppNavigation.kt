@@ -435,10 +435,7 @@ fun AppNavigation(sessionViewModel: SessionViewModel) {
             // ✅ SUBSCREENS CHALLENGES
             composable("challenges/discover") {
                 DiscoverScreen(
-                    onBack = { navController.popBackStack() },
-                    onOpenTemplateDetail = { templateId ->
-                        navController.navigate("challenges/template_detail/$templateId")
-                    }
+                    onBack = { navController.popBackStack() }
                 )
             }
             composable("challenges/quests") { QuestsScreen(onBack = { navController.popBackStack() }) }
