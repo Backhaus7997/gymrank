@@ -3,6 +3,7 @@ package com.example.gymrank.ui.screens.challenges.subscreens
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.gymrank.data.repository.MissionTemplateRepositoryFirestoreImpl
+import com.example.gymrank.data.repository.PointsRepositoryFirestoreImpl
 import com.example.gymrank.data.repository.UserMissionsRepositoryFirestoreImpl
 import com.example.gymrank.domain.model.MissionTemplate
 import com.example.gymrank.domain.model.UserMission
@@ -33,7 +34,8 @@ data class CreateState(
 
 class QuestsViewModel(
     private val templatesRepo: MissionTemplateRepositoryFirestoreImpl = MissionTemplateRepositoryFirestoreImpl(),
-    private val userMissionsRepo: UserMissionsRepositoryFirestoreImpl = UserMissionsRepositoryFirestoreImpl()
+    private val userMissionsRepo: UserMissionsRepositoryFirestoreImpl = UserMissionsRepositoryFirestoreImpl(),
+    private val pointsRepo: PointsRepositoryFirestoreImpl = PointsRepositoryFirestoreImpl()
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(QuestsUiState())
@@ -45,13 +47,8 @@ class QuestsViewModel(
     private val _createState = MutableStateFlow(CreateState())
     val createState: StateFlow<CreateState> = _createState
 
-    fun clearStartState() {
-        _startState.value = StartState()
-    }
-
-    fun clearCreateState() {
-        _createState.value = CreateState()
-    }
+    fun clearStartState() { _startState.value = StartState() }
+    fun clearCreateState() { _createState.value = CreateState() }
 
     fun observe() {
         observeDiscover()
@@ -61,6 +58,7 @@ class QuestsViewModel(
     private fun observeDiscover() {
         viewModelScope.launch {
             _uiState.update { it.copy(loadingDiscover = true, discoverError = null) }
+
             templatesRepo.observeActiveMissions().collect { res ->
                 res.onSuccess { list ->
                     _uiState.update { it.copy(discover = list, loadingDiscover = false, discoverError = null) }
@@ -74,9 +72,15 @@ class QuestsViewModel(
     private fun observeLibrary() {
         viewModelScope.launch {
             _uiState.update { it.copy(loadingLibrary = true, libraryError = null) }
+
             userMissionsRepo.observeMyMissions().collect { res ->
                 res.onSuccess { list ->
                     _uiState.update { it.copy(library = list, loadingLibrary = false, libraryError = null) }
+
+                    // ✅ asegura sumar puntos de misiones completadas (una sola vez)
+                    viewModelScope.launch {
+                        runCatching { userMissionsRepo.awardCompletedMissionsIfNeeded(pointsRepo) }
+                    }
                 }.onFailure { e ->
                     _uiState.update { it.copy(loadingLibrary = false, libraryError = e.message ?: "Error cargando biblioteca") }
                 }
@@ -87,12 +91,8 @@ class QuestsViewModel(
     fun startTemplateMission(t: MissionTemplate) {
         viewModelScope.launch {
             runCatching { userMissionsRepo.startTemplateMission(t) }
-                .onSuccess { docId ->
-                    _startState.value = StartState(startedInstanceId = docId)
-                }
-                .onFailure { e ->
-                    _startState.value = StartState(startError = e.message ?: "No se pudo iniciar")
-                }
+                .onSuccess { docId -> _startState.value = StartState(startedInstanceId = docId) }
+                .onFailure { e -> _startState.value = StartState(startError = e.message ?: "No se pudo iniciar") }
         }
     }
 

@@ -5,6 +5,7 @@
 
 package com.example.gymrank.ui.screens.home
 
+import android.content.Context
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
@@ -38,6 +39,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -60,8 +62,12 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.tasks.await
 import java.util.Calendar
+import java.util.Date
 import java.util.Locale
+import java.util.TimeZone
 import kotlin.math.max
+import androidx.compose.ui.window.Dialog
+import java.text.SimpleDateFormat
 
 // ============================================
 // Screen
@@ -108,7 +114,86 @@ fun HomeScreen(
     // ============================
     // ✅ Feed visibility (perfil)
     // ============================
+// ✅ Repos
     val userRepo = remember { UserRepositoryImpl() }
+    val pointsRepo = remember { com.example.gymrank.data.repository.PointsRepositoryFirestoreImpl() }
+    // =========================================================
+    // ✅ POPUP "¿Entrenaste hoy?" + puntos
+    // =========================================================
+    val todayKey = remember { todayKeyYYYYMMDD() }
+
+    var showWorkoutPrompt by remember { mutableStateOf(false) }
+    var answeredToday by remember { mutableStateOf(false) }
+    var dismissedButNotAnswered by remember { mutableStateOf(false) }
+    var promptLoading by remember { mutableStateOf(false) }
+
+// ✅ guarda el último cierre (para que NO aparezca al volver a Home si no pasaron 10 min)
+    val context = LocalContext.current
+    val promptIntervalMillis = 10 * 60 * 1000L
+
+// SharedPrefs para persistir el cooldown aunque salgas y vuelvas a Home
+    val prefs = remember(context) {
+        context.getSharedPreferences("gymrank_prefs", Context.MODE_PRIVATE)
+    }
+
+// Key por usuario + día (así mañana arranca limpio)
+    val dismissKey = remember(uid, todayKey) { "workout_prompt_last_dismissed_${uid}_$todayKey" }
+
+    var lastDismissedAtMillis by remember { mutableLongStateOf(0L) }
+
+    LaunchedEffect(uid) {
+        if (uid.isBlank()) return@LaunchedEffect
+
+        promptLoading = true
+
+        runCatching {
+            // ✅ asegurar points para usuarios viejos
+            userRepo.ensureMyPointsField()
+
+            // ✅ saber si ya respondió hoy
+            val answeredOn = userRepo.getWorkoutPromptAnsweredOn()
+            answeredToday = (answeredOn == todayKey)
+
+            if (answeredToday) {
+                showWorkoutPrompt = false
+                dismissedButNotAnswered = false
+            } else {
+                val now = System.currentTimeMillis()
+                lastDismissedAtMillis = prefs.getLong(dismissKey, 0L)
+                val canShowNow = if (lastDismissedAtMillis == 0L) {
+                    true
+                } else {
+                    val elapsed = now - lastDismissedAtMillis
+                    elapsed >= promptIntervalMillis
+                }
+
+                showWorkoutPrompt = canShowNow
+                dismissedButNotAnswered = !canShowNow // si lo cerró hace poco, queda esperando timer
+            }
+        }
+
+        promptLoading = false
+    }
+
+    // ✅ si lo cierra, re-aparece cada 10 minutos hasta que responda hoy
+    LaunchedEffect(dismissedButNotAnswered, answeredToday, lastDismissedAtMillis) {
+        if (!dismissedButNotAnswered) return@LaunchedEffect
+        if (answeredToday) return@LaunchedEffect
+
+        while (dismissedButNotAnswered && !answeredToday) {
+            val now = System.currentTimeMillis()
+            val elapsed = now - lastDismissedAtMillis
+            val remaining = (promptIntervalMillis - elapsed).coerceAtLeast(0L)
+
+            delay(remaining)
+
+            if (dismissedButNotAnswered && !answeredToday) {
+                showWorkoutPrompt = true
+                // NO ponemos dismissedButNotAnswered=false porque si lo vuelve a cerrar,
+                // sigue el ciclo (y se reprograma con el nuevo lastDismissedAtMillis)
+            }
+        }
+    }
 
     var feedVisibility by remember { mutableStateOf(FeedVisibility.PUBLIC) }
     var isFeedVisibilityLoading by remember { mutableStateOf(false) }
@@ -578,6 +663,45 @@ fun HomeScreen(
                 )
             }
         }
+    }
+
+    if (showWorkoutPrompt && !answeredToday && uid.isNotBlank()) {
+        WorkoutTodayPromptDialog(
+            onYes = {
+                scope.launch {
+                    runCatching {
+                        // 1) marcar que respondió hoy (para que no vuelva a preguntar)
+                        userRepo.answerWorkoutPromptToday(todayKey = todayKey, answerYes = true)
+
+                        // 2) sumar +20 puntos (idempotente 1 vez por día)
+                        pointsRepo.awardGymCheckinPoints(todayKey = todayKey, points = 20)
+                    }.onSuccess {
+                        answeredToday = true
+                        showWorkoutPrompt = false
+                        dismissedButNotAnswered = false
+                    }
+                }
+            },
+            onNo = {
+                scope.launch {
+                    runCatching {
+                        userRepo.answerWorkoutPromptToday(todayKey = todayKey, answerYes = false)
+                    }.onSuccess {
+                        answeredToday = true
+                        showWorkoutPrompt = false
+                        dismissedButNotAnswered = false
+                    }
+                }
+            },
+            onClose = {
+                showWorkoutPrompt = false
+                dismissedButNotAnswered = true
+
+                val now = System.currentTimeMillis()
+                lastDismissedAtMillis = now
+                prefs.edit().putLong(dismissKey, now).apply()   // ✅ persiste cooldown
+            }
+        )
     }
 
     // ============================================
@@ -1779,6 +1903,99 @@ private fun LegendDot(label: String, color: Color) {
 // HELPERS
 // ============================================
 
+private fun todayKeyYYYYMMDD(): String {
+    val tz = TimeZone.getTimeZone("America/Argentina/Buenos_Aires")
+    val sdf = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).apply {
+        timeZone = tz
+    }
+    return sdf.format(Date())
+}
+
+@Composable
+private fun WorkoutTodayPromptDialog(
+    onYes: () -> Unit,
+    onNo: () -> Unit,
+    onClose: () -> Unit
+) {
+    Dialog(onDismissRequest = onClose) {
+        Surface(
+            shape = RoundedCornerShape(22.dp),
+            color = DesignTokens.Colors.SurfaceElevated,
+            tonalElevation = 0.dp,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp)
+        ) {
+            Column(
+                modifier = Modifier
+                    .border(1.dp, DesignTokens.Colors.SurfaceInputs, RoundedCornerShape(22.dp))
+                    .padding(16.dp)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "Check diario",
+                        fontSize = 16.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = DesignTokens.Colors.TextPrimary,
+                        modifier = Modifier.weight(1f)
+                    )
+                    IconButton(onClick = onClose) {
+                        Icon(
+                            imageVector = Icons.Default.Close,
+                            contentDescription = "Cerrar",
+                            tint = DesignTokens.Colors.TextPrimary
+                        )
+                    }
+                }
+
+                Spacer(Modifier.height(8.dp))
+
+                Text(
+                    text = "¿Entrenaste hoy?",
+                    fontSize = 20.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = DesignTokens.Colors.TextPrimary
+                )
+
+                Spacer(Modifier.height(6.dp))
+
+                Text(
+                    text = "Si marcás que sí, sumás +20 puntos.",
+                    fontSize = 12.sp,
+                    color = DesignTokens.Colors.TextSecondary
+                )
+
+                Spacer(Modifier.height(14.dp))
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    OutlinedButton(
+                        onClick = onNo,
+                        modifier = Modifier.weight(1f),
+                        shape = RoundedCornerShape(999.dp),
+                        border = BorderStroke(1.dp, DesignTokens.Colors.SurfaceInputs)
+                    ) {
+                        Text("No", color = DesignTokens.Colors.TextPrimary, fontWeight = FontWeight.SemiBold)
+                    }
+
+                    Button(
+                        onClick = onYes,
+                        modifier = Modifier.weight(1f),
+                        shape = RoundedCornerShape(999.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = GymRankColors.PrimaryAccent)
+                    ) {
+                        Text("Sí", color = Color.Black, fontWeight = FontWeight.Bold)
+                    }
+                }
+            }
+        }
+    }
+}
 private fun buildMuscleCountsFromRoutinePlan(
     muscles: List<String>
 ): Pair<Map<com.example.gymrank.ui.components.MuscleId, Int>, Map<com.example.gymrank.ui.components.MuscleId, Int>> {

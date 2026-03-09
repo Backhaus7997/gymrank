@@ -6,6 +6,9 @@ import com.google.firebase.firestore.FieldValue
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.SetOptions
 import kotlinx.coroutines.tasks.await
+import java.util.Calendar
+import java.util.Locale
+import java.util.TimeZone
 
 class UserRepositoryImpl(
     private val auth: FirebaseAuth = FirebaseAuth.getInstance(),
@@ -13,8 +16,38 @@ class UserRepositoryImpl(
 ) {
 
     companion object {
-        // PUBLIC | FRIENDS | PRIVATE
         const val DEFAULT_FEED_VISIBILITY = "PUBLIC"
+
+        // legacy
+        const val FIELD_POINTS = "points"
+
+        // ranking
+        const val FIELD_WEEKLY_POINTS = "weeklyPoints"
+        const val FIELD_MONTHLY_POINTS = "monthlyPoints"
+        const val FIELD_TOTAL_POINTS = "totalPoints"
+        const val FIELD_WEEKLY_KEY = "weeklyKey"
+        const val FIELD_MONTHLY_KEY = "monthlyKey"
+
+        // workout prompt
+        const val FIELD_WORKOUT_PROMPT_ANSWERED_ON = "workoutPromptAnsweredOn"
+        const val FIELD_WORKOUT_PROMPT_ANSWER = "workoutPromptAnswer"
+    }
+
+    private val arTz: TimeZone = TimeZone.getTimeZone("America/Argentina/Buenos_Aires")
+
+    private fun currentWeeklyKeyAR(): String {
+        val cal = Calendar.getInstance(arTz, Locale.getDefault())
+        cal.firstDayOfWeek = Calendar.MONDAY
+        val year = cal.get(Calendar.YEAR)
+        val week = cal.get(Calendar.WEEK_OF_YEAR).toString().padStart(2, '0')
+        return "$year-W$week"
+    }
+
+    private fun currentMonthlyKeyAR(): String {
+        val cal = Calendar.getInstance(arTz, Locale.getDefault())
+        val year = cal.get(Calendar.YEAR)
+        val month = (cal.get(Calendar.MONTH) + 1).toString().padStart(2, '0')
+        return "$year-$month"
     }
 
     private fun requireUid(): String =
@@ -37,8 +70,6 @@ class UserRepositoryImpl(
             .await()
     }
 
-    // ✅ NUEVO: continuar sin vincular gym -> deja esos campos "vacíos"
-    // Recomendado: BORRAR campos (quedan inexistentes)
     suspend fun clearSelectedGym() {
         val uid = requireUid()
 
@@ -80,7 +111,8 @@ class UserRepositoryImpl(
     }
 
     /**
-     * ✅ Guardamos onboarding + seteamos default de privacidad de feed si es primera vez.
+     * ✅ Onboarding
+     * - Inicializa ranking fields + keys
      */
     suspend fun saveOnboarding(
         username: String,
@@ -92,6 +124,9 @@ class UserRepositoryImpl(
     ) {
         val uid = requireUid()
 
+        val wk = currentWeeklyKeyAR()
+        val mk = currentMonthlyKeyAR()
+
         val updates: Map<String, Any?> = mapOf(
             "username" to username,
             "dob" to dob,
@@ -101,6 +136,17 @@ class UserRepositoryImpl(
             "experience" to experience,
             "profileCompleted" to true,
             "feedVisibility" to DEFAULT_FEED_VISIBILITY,
+
+            // legacy
+            FIELD_POINTS to 0L,
+
+            // ✅ ranking
+            FIELD_WEEKLY_POINTS to 0L,
+            FIELD_MONTHLY_POINTS to 0L,
+            FIELD_TOTAL_POINTS to 0L,
+            FIELD_WEEKLY_KEY to wk,
+            FIELD_MONTHLY_KEY to mk,
+
             "updatedAt" to FieldValue.serverTimestamp()
         )
 
@@ -193,6 +239,54 @@ class UserRepositoryImpl(
         db.collection("users")
             .document(uid)
             .set(updates, SetOptions.merge())
+            .await()
+    }
+
+    // =========================================================
+    // ✅ POINTS FIELDS (compat + ranking)
+    // =========================================================
+
+    /**
+     * ✅ Si el usuario es viejo y no tiene fields, los crea.
+     */
+    suspend fun ensureMyPointsField() {
+        val uid = auth.currentUser?.uid ?: return
+        val ref = db.collection("users").document(uid)
+        val snap = ref.get().await()
+
+        val updates = mutableMapOf<String, Any>()
+
+        if (snap.getLong(FIELD_POINTS) == null) updates[FIELD_POINTS] = 0L
+        if (snap.getLong(FIELD_WEEKLY_POINTS) == null) updates[FIELD_WEEKLY_POINTS] = 0L
+        if (snap.getLong(FIELD_MONTHLY_POINTS) == null) updates[FIELD_MONTHLY_POINTS] = 0L
+        if (snap.getLong(FIELD_TOTAL_POINTS) == null) updates[FIELD_TOTAL_POINTS] = 0L
+
+        if (snap.getString(FIELD_WEEKLY_KEY).isNullOrBlank()) updates[FIELD_WEEKLY_KEY] = currentWeeklyKeyAR()
+        if (snap.getString(FIELD_MONTHLY_KEY).isNullOrBlank()) updates[FIELD_MONTHLY_KEY] = currentMonthlyKeyAR()
+
+        if (updates.isNotEmpty()) {
+            ref.set(updates, SetOptions.merge()).await()
+        }
+    }
+
+    suspend fun getWorkoutPromptAnsweredOn(): String? {
+        val uid = auth.currentUser?.uid ?: return null
+        val doc = db.collection("users").document(uid).get().await()
+        return doc.getString(FIELD_WORKOUT_PROMPT_ANSWERED_ON)
+    }
+
+    suspend fun answerWorkoutPromptToday(todayKey: String, answerYes: Boolean) {
+        val uid = FirebaseAuth.getInstance().currentUser?.uid ?: return
+
+        db.collection("users")
+            .document(uid)
+            .update(
+                mapOf(
+                    FIELD_WORKOUT_PROMPT_ANSWER to answerYes,
+                    FIELD_WORKOUT_PROMPT_ANSWERED_ON to todayKey,
+                    "updatedAt" to System.currentTimeMillis()
+                )
+            )
             .await()
     }
 }

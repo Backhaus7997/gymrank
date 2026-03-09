@@ -1,76 +1,72 @@
 package com.example.gymrank.data.repository
 
-import com.example.gymrank.domain.model.RankingEntryUi
-import com.example.gymrank.domain.model.RankingPeriod
-import com.example.gymrank.domain.model.RankingResult
-import com.example.gymrank.domain.repository.RankingRepository
+import com.example.gymrank.ui.screens.ranking.RankingPeriod
+import com.example.gymrank.ui.screens.ranking.RankingUserRow
+import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.firestore.FirebaseFirestore
+import com.google.firebase.firestore.ListenerRegistration
 import com.google.firebase.firestore.Query
-import kotlinx.coroutines.tasks.await
+import kotlinx.coroutines.channels.awaitClose
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.callbackFlow
 
-class RankingRepositoryFirestore(
-    private val db: FirebaseFirestore,
-    private val myUserId: String
-) : RankingRepository {
+class RankingRepositoryFirestoreImpl(
+    private val db: FirebaseFirestore = FirebaseFirestore.getInstance(),
+    private val auth: FirebaseAuth = FirebaseAuth.getInstance()
+) {
+    private val usersCol get() = db.collection("users")
 
-    override suspend fun fetchRanking(
-        gymId: String,
+    fun observeRanking(
         period: RankingPeriod,
-        limit: Long
-    ): RankingResult {
+        gymId: String?,
+        limit: Long = 100
+    ): Flow<Result<List<RankingUserRow>>> = callbackFlow {
+        var reg: ListenerRegistration? = null
 
-        val pointsField = when (period) {
-            RankingPeriod.Weekly -> "weeklyPoints"
-            RankingPeriod.Monthly -> "monthlyPoints"
-            RankingPeriod.AllTime -> "allTimePoints"
+        try {
+            val qBase = if (!gymId.isNullOrBlank()) {
+                usersCol
+                    .whereEqualTo("gymId", gymId)
+                    .orderBy(period.field, Query.Direction.DESCENDING)
+            } else {
+                usersCol
+                    .orderBy(period.field, Query.Direction.DESCENDING)
+            }
+
+            val q = qBase.limit(limit)
+
+            reg = q.addSnapshotListener { snap, err ->
+                if (err != null) {
+                    trySend(Result.failure(err))
+                    return@addSnapshotListener
+                }
+
+                val list = snap?.documents.orEmpty().mapNotNull { d ->
+                    val uid = d.id
+                    val name = d.getString("displayName")
+                        ?: d.getString("username")
+                        ?: "Usuario"
+                    val photo = d.getString("photoUrl")
+                    val gId = d.getString("gymId")
+                    val points = (d.getLong(period.field) ?: 0L)
+
+                    RankingUserRow(
+                        uid = uid,
+                        displayName = name,
+                        photoUrl = photo,
+                        points = points,
+                        gymId = gId
+                    )
+                }
+
+                trySend(Result.success(list))
+            }
+        } catch (e: Exception) {
+            trySend(Result.failure(e))
         }
 
-        val snap = db.collection("users")
-            .whereEqualTo("gymId", gymId)
-            .orderBy(pointsField, Query.Direction.DESCENDING)
-            .limit(limit)
-            .get()
-            .await()
-
-        val top = snap.documents.mapIndexed { index, doc ->
-            val uid = doc.id
-            val name = doc.getString("displayName") ?: "Sin nombre"
-            val points = (doc.getLong(pointsField) ?: 0L).toInt()
-
-            RankingEntryUi(
-                position = index + 1,
-                userId = uid,
-                name = name,
-                points = points,
-                isMe = uid == myUserId
-            )
-        }
-
-        val meInTop = top.firstOrNull { it.isMe }
-        if (meInTop != null) {
-            return RankingResult(
-                top = top,
-                mePosition = meInTop.position,
-                mePoints = meInTop.points
-            )
-        }
-
-        // Si no estoy en el top, leo mi doc para saber mis puntos
-        val meDoc = db.collection("users").document(myUserId).get().await()
-        val mePoints = (meDoc.getLong(pointsField) ?: 0L).toInt()
-
-        // Calcular posición (MVP): cuantos tienen más puntos que yo + 1
-        val higherCount = db.collection("users")
-            .whereEqualTo("gymId", gymId)
-            .whereGreaterThan(pointsField, mePoints)
-            .get()
-            .await()
-            .size()
-
-        return RankingResult(
-            top = top,
-            mePosition = higherCount + 1,
-            mePoints = mePoints
-        )
+        awaitClose { reg?.remove() }
     }
+
+    fun currentUid(): String? = auth.currentUser?.uid
 }

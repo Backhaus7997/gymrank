@@ -365,16 +365,6 @@ fun AppNavigation(sessionViewModel: SessionViewModel) {
                 )
             }
 
-            // ✅ (Opcional) detalle SINGLE por workoutId (si algún día lo necesitás)
-            composable("feed/workout_detail/{ownerUid}/{workoutId}") { entry ->
-                val ownerUid = entry.arguments?.getString("ownerUid").orEmpty()
-                val workoutId = entry.arguments?.getString("workoutId").orEmpty()
-                WorkoutDetailScreen(
-                    ownerUid = ownerUid,
-                    workoutId = workoutId, // ✅ SINGLE MODE
-                    onBack = { navController.popBackStack() }
-                )
-            }
 
             // ✅ CHALLENGES
             composable("challenges") {
@@ -422,6 +412,7 @@ fun AppNavigation(sessionViewModel: SessionViewModel) {
                     onBack = { navController.popBackStack() }
                 )
             }
+
             composable(Screen.Ranking.route) {
                 RankingScreen(
                     navController = navController,
@@ -429,7 +420,7 @@ fun AppNavigation(sessionViewModel: SessionViewModel) {
                 )
             }
 
-            // ✅ DETAILS REAL
+// ✅ DETAILS REAL
             composable(
                 route = RankingRoutes.Details,
                 arguments = RankingRoutes.detailsArgs

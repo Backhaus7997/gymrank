@@ -9,10 +9,13 @@ import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.Query
 import com.google.firebase.firestore.SetOptions
 import kotlinx.coroutines.tasks.await
+import com.google.firebase.firestore.FieldValue
+import com.google.firebase.auth.FirebaseAuth
 
 class ChallengeRepositoryFirestoreImpl(
     private val db: FirebaseFirestore = FirebaseFirestore.getInstance()
 ) : ChallengeRepository {
+    private val auth: FirebaseAuth = FirebaseAuth.getInstance()
 
     private val templatesCol get() = db.collection("challenge_templates")
     private val userChallengesCol get() = db.collection("user_challenges")
@@ -204,5 +207,94 @@ class ChallengeRepositoryFirestoreImpl(
                 updatedAt = getLong("updatedAt")
             )
         }.getOrNull()
+    }
+
+    suspend fun completeUserChallengeAndAwardPoints(
+        userChallengeId: String,
+        pointsRepo: PointsRepositoryFirestoreImpl
+    ) {
+        val ref = db.collection("user_challenges").document(userChallengeId)
+
+        // 1) Marcar COMPLETED una vez
+        db.runTransaction { tx ->
+            val snap = tx.get(ref)
+            if (!snap.exists()) return@runTransaction null
+
+            val status = (snap.getString("status") ?: ChallengeStatus.ACTIVE.name).uppercase()
+            if (status == ChallengeStatus.COMPLETED.name) return@runTransaction null
+
+            tx.update(
+                ref,
+                mapOf(
+                    "status" to ChallengeStatus.COMPLETED.name,
+                    "completedAt" to FieldValue.serverTimestamp(),
+                    "updatedAt" to FieldValue.serverTimestamp()
+                )
+            )
+            null
+        }.await()
+
+        // 2) Leer puntos del template (source of truth)
+        val after = ref.get().await()
+        if (!after.exists()) return
+
+        val templateId = after.getString("templateId").orEmpty()
+        if (templateId.isBlank()) return
+
+        val tSnap = templatesCol.document(templateId).get().await()
+        val points = (tSnap.getLong("points") ?: 0L).toInt()
+        if (points <= 0) return
+
+        // 3) Award idempotente
+        val eventId = "challenge_completed_${after.getString("uid").orEmpty()}_$userChallengeId"
+        pointsRepo.awardPointsIdempotent(
+            eventId = eventId,
+            sourceType = "challenge",
+            sourceId = userChallengeId,
+            points = points
+        )
+    }
+
+    /**
+     * ✅ Recorre COMPLETED y si pointsAwarded==false, los premia usando el ledger (idempotente)
+     * Mantiene compatibilidad con data actual.
+     */
+    suspend fun awardCompletedChallengesIfNeeded(pointsRepo: PointsRepositoryFirestoreImpl) {
+        val uid = auth.currentUser?.uid ?: return
+
+        val snap = userChallengesCol
+            .whereEqualTo("uid", uid)
+            .whereEqualTo("status", ChallengeStatus.COMPLETED.name)
+            .get()
+            .await()
+
+        if (snap.isEmpty) return
+
+        for (d in snap.documents) {
+            val alreadyAwarded = d.getBoolean("pointsAwarded") ?: false
+            if (alreadyAwarded) continue
+
+            val instanceId = d.id
+            val templateId = d.getString("templateId").orEmpty()
+            if (templateId.isBlank()) {
+                d.reference.set(mapOf("pointsAwarded" to true), SetOptions.merge()).await()
+                continue
+            }
+
+            val tSnap = templatesCol.document(templateId).get().await()
+            val points = (tSnap.getLong("points") ?: 0L).toInt()
+
+            if (points > 0) {
+                val eventId = "challenge_completed_${uid}_$instanceId"
+                pointsRepo.awardPointsIdempotent(
+                    eventId = eventId,
+                    sourceType = "challenge",
+                    sourceId = instanceId,
+                    points = points
+                )
+            }
+
+            d.reference.set(mapOf("pointsAwarded" to true), SetOptions.merge()).await()
+        }
     }
 }

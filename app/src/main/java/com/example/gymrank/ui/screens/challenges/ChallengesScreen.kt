@@ -19,7 +19,6 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -27,7 +26,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Build
 import androidx.compose.material.icons.filled.Casino
 import androidx.compose.material.icons.filled.Checklist
-import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Search
@@ -72,6 +70,8 @@ import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.gymrank.domain.model.ChallengeStatus
 import com.example.gymrank.domain.model.UserChallenge
+import com.example.gymrank.data.repository.ChallengeRepositoryFirestoreImpl
+import com.example.gymrank.data.repository.UserMissionsRepositoryFirestoreImpl
 import com.example.gymrank.ui.components.GlassCard
 import com.example.gymrank.ui.theme.DesignTokens
 import com.example.gymrank.ui.theme.GymRankColors
@@ -353,14 +353,54 @@ class ChallengesViewModel : ViewModel() {
     private var lastChallenges: List<UserChallenge> = emptyList()
     private var lastMissions: List<UserMissionDoc> = emptyList()
 
+    private val challengeRepo = ChallengeRepositoryFirestoreImpl()
+    private val userMissionsRepo = UserMissionsRepositoryFirestoreImpl()
+    private val pointsRepo = com.example.gymrank.data.repository.PointsRepositoryFirestoreImpl()
+
     init {
         listenChallenges()
         listenMissions()
+
+        // ✅ Catch-up automático al inicializar
+        viewModelScope.launch {
+            runCatching {
+                challengeRepo.awardCompletedChallengesIfNeeded(pointsRepo)
+            }
+        }
     }
 
     fun refreshNow() {
         fetchOnceChallenges()
         fetchOnceMissions()
+    }
+
+    fun manualComplete(item: UnifiedItemUi, nowMillis: Long) {
+        val start = item.startedAt ?: return
+        val duration = item.durationDays.coerceAtLeast(1)
+        val dayNumber = computeDayNumber(nowMillis, start, duration)
+
+        // ✅ solo cuando terminó
+        if (dayNumber < duration || item.isCompleted) return
+
+        viewModelScope.launch {
+            runCatching {
+                when (item.kind) {
+                    UnifiedKind.CHALLENGE -> {
+                        challengeRepo.completeUserChallengeAndAwardPoints(
+                            userChallengeId = item.instanceId,
+                            pointsRepo = pointsRepo
+                        )
+                    }
+                    UnifiedKind.MISSION -> {
+                        userMissionsRepo.completeUserMissionAndAwardPoints(
+                            userMissionId = item.instanceId,
+                            pointsRepo = pointsRepo
+                        )
+                    }
+                }
+                closeDetail()
+            }
+        }
     }
 
     fun autoCompleteExpired(active: List<UnifiedItemUi>, nowMillis: Long) {
@@ -379,21 +419,19 @@ class ChallengesViewModel : ViewModel() {
                 if (!autoCompletedKeys.add(item.key)) return@forEach
 
                 runCatching {
-                    val patch = mapOf(
-                        "status" to "COMPLETED",
-                        "completedAt" to nowMillis,
-                        "updatedAt" to nowMillis
-                    )
                     when (item.kind) {
-                        UnifiedKind.CHALLENGE ->
-                            userChallengesCol.document(item.instanceId)
-                                .set(patch, com.google.firebase.firestore.SetOptions.merge())
-                                .await()
-
-                        UnifiedKind.MISSION ->
-                            userMissionsCol.document(item.instanceId)
-                                .set(patch, com.google.firebase.firestore.SetOptions.merge())
-                                .await()
+                        UnifiedKind.CHALLENGE -> {
+                            challengeRepo.completeUserChallengeAndAwardPoints(
+                                userChallengeId = item.instanceId,
+                                pointsRepo = pointsRepo
+                            )
+                        }
+                        UnifiedKind.MISSION -> {
+                            userMissionsRepo.completeUserMissionAndAwardPoints(
+                                userMissionId = item.instanceId,
+                                pointsRepo = pointsRepo
+                            )
+                        }
                     }
                 }.onFailure {
                     autoCompletedKeys.remove(item.key)
@@ -402,52 +440,6 @@ class ChallengesViewModel : ViewModel() {
         }
     }
 
-    fun abandon(item: UnifiedItemUi) {
-        viewModelScope.launch {
-            runCatching {
-                when (item.kind) {
-                    UnifiedKind.CHALLENGE -> {
-                        userChallengesCol.document(item.instanceId).delete().await()
-                    }
-                    UnifiedKind.MISSION -> {
-                        userMissionsCol.document(item.instanceId).delete().await()
-                    }
-                }
-            }.onFailure { e ->
-                // Si querés, podés loguear o mostrar error (por ahora lo dejamos silencioso)
-                // _state.value = _state.value.copy(error = e.message)
-            }
-            // No hace falta recompute manual:
-            // los snapshot listeners van a refrescar solos al borrarse el doc.
-        }
-    }
-
-    fun manualComplete(item: UnifiedItemUi, nowMillis: Long) {
-        val start = item.startedAt ?: return
-        val duration = item.durationDays.coerceAtLeast(1)
-        val dayNumber = computeDayNumber(nowMillis, start, duration)
-
-        // ✅ solo cuando terminó
-        if (dayNumber < duration || item.isCompleted) return
-
-        viewModelScope.launch {
-            runCatching {
-                val patch = mapOf(
-                    "status" to "COMPLETED",
-                    "completedAt" to nowMillis,
-                    "updatedAt" to nowMillis
-                )
-                when (item.kind) {
-                    UnifiedKind.CHALLENGE -> userChallengesCol.document(item.instanceId)
-                        .set(patch, com.google.firebase.firestore.SetOptions.merge()).await()
-
-                    UnifiedKind.MISSION -> userMissionsCol.document(item.instanceId)
-                        .set(patch, com.google.firebase.firestore.SetOptions.merge()).await()
-                }
-                closeDetail()
-            }
-        }
-    }
 
     private fun listenChallenges() {
         val uid = FirebaseAuth.getInstance().currentUser?.uid
@@ -590,7 +582,7 @@ class ChallengesViewModel : ViewModel() {
             val t = challengeTemplateCache[uc.templateId]
             val title = t?.title ?: "Desafío"
             val subtitle = when {
-                !t?.subtitle.isNullOrBlank() -> t?.subtitle.orEmpty()
+                t?.subtitle?.isNotBlank() == true -> t.subtitle
                 else -> "Cargando detalles..."
             }
 
@@ -620,7 +612,7 @@ class ChallengesViewModel : ViewModel() {
             val title = um.title.ifBlank { t?.title ?: "Misión" }
             val subtitle = when {
                 um.subtitle.isNotBlank() -> um.subtitle
-                !t?.subtitle.isNullOrBlank() -> t?.subtitle.orEmpty()
+                t?.subtitle?.isNotBlank() == true -> t.subtitle
                 um.description.isNotBlank() -> um.description
                 else -> "Misión activa"
             }
@@ -654,6 +646,35 @@ class ChallengesViewModel : ViewModel() {
             active = unified.filter { !it.isCompleted },
             completed = unified.filter { it.isCompleted }
         )
+
+        // ✅ Catch-up cada vez que se actualizan los datos
+        if (unified.any { it.isCompleted }) {
+            viewModelScope.launch {
+                runCatching {
+                    challengeRepo.awardCompletedChallengesIfNeeded(pointsRepo)
+                }
+            }
+        }
+    }
+
+    fun abandon(item: UnifiedItemUi) {
+        viewModelScope.launch {
+            runCatching {
+                when (item.kind) {
+                    UnifiedKind.CHALLENGE -> {
+                        userChallengesCol.document(item.instanceId).delete().await()
+                    }
+                    UnifiedKind.MISSION -> {
+                        userMissionsCol.document(item.instanceId).delete().await()
+                    }
+                }
+            }.onFailure { e ->
+                // Si querés, podés loguear o mostrar error (por ahora lo dejamos silencioso)
+                // _state.value = _state.value.copy(error = e.message)
+            }
+            // No hace falta recompute manual:
+            // los snapshot listeners van a refrescar solos al borrarse el doc.
+        }
     }
 
     // --------- FIRESTORE PARSERS (MINI) ---------

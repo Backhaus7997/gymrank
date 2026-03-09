@@ -19,6 +19,9 @@ class DiscoverViewModel(
     private val _state = MutableStateFlow(DiscoverState())
     val state: StateFlow<DiscoverState> = _state.asStateFlow()
 
+    private val challengesRepo: ChallengeRepositoryFirestoreImpl = ChallengeRepositoryFirestoreImpl()
+    private val pointsRepo: com.example.gymrank.data.repository.PointsRepositoryFirestoreImpl = com.example.gymrank.data.repository.PointsRepositoryFirestoreImpl()
+
     fun load() {
         viewModelScope.launch {
             try {
@@ -47,6 +50,12 @@ class DiscoverViewModel(
                     userChallenges = userChallenges,
                     error = null
                 )
+
+                // Dentro del collect.onSuccess, luego de actualizar estado:
+                // ✅ asegura sumar puntos de desafíos completados (una sola vez)
+                viewModelScope.launch {
+                    runCatching { challengesRepo.awardCompletedChallengesIfNeeded(pointsRepo) }
+                }
             } catch (e: Exception) {
                 _state.value = _state.value.copy(
                     loading = false,

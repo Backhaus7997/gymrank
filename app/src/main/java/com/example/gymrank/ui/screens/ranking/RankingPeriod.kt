@@ -1,4 +1,4 @@
-package com.example.gymrank.domain.model
+package com.example.gymrank.ui.screens.ranking
 
 enum class RankingPeriod(
     val label: String,
