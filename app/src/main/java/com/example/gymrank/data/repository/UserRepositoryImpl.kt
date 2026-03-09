@@ -25,6 +25,8 @@ class UserRepositoryImpl(
         const val FIELD_WEEKLY_POINTS = "weeklyPoints"
         const val FIELD_MONTHLY_POINTS = "monthlyPoints"
         const val FIELD_TOTAL_POINTS = "totalPoints"
+        const val FIELD_GLOBAL_POINTS = "globalPoints"
+        const val FIELD_GLOBAL_LEVEL = "globalLevel"
         const val FIELD_WEEKLY_KEY = "weeklyKey"
         const val FIELD_MONTHLY_KEY = "monthlyKey"
 
@@ -144,6 +146,8 @@ class UserRepositoryImpl(
             FIELD_WEEKLY_POINTS to 0L,
             FIELD_MONTHLY_POINTS to 0L,
             FIELD_TOTAL_POINTS to 0L,
+            FIELD_GLOBAL_POINTS to 0L,
+            FIELD_GLOBAL_LEVEL to 1L,
             FIELD_WEEKLY_KEY to wk,
             FIELD_MONTHLY_KEY to mk,
 
@@ -260,6 +264,8 @@ class UserRepositoryImpl(
         if (snap.getLong(FIELD_WEEKLY_POINTS) == null) updates[FIELD_WEEKLY_POINTS] = 0L
         if (snap.getLong(FIELD_MONTHLY_POINTS) == null) updates[FIELD_MONTHLY_POINTS] = 0L
         if (snap.getLong(FIELD_TOTAL_POINTS) == null) updates[FIELD_TOTAL_POINTS] = 0L
+        if (snap.getLong(FIELD_GLOBAL_POINTS) == null) updates[FIELD_GLOBAL_POINTS] = 0L
+        if (snap.getLong(FIELD_GLOBAL_LEVEL) == null) updates[FIELD_GLOBAL_LEVEL] = 1L
 
         if (snap.getString(FIELD_WEEKLY_KEY).isNullOrBlank()) updates[FIELD_WEEKLY_KEY] = currentWeeklyKeyAR()
         if (snap.getString(FIELD_MONTHLY_KEY).isNullOrBlank()) updates[FIELD_MONTHLY_KEY] = currentMonthlyKeyAR()

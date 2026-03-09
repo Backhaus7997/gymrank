@@ -6,5 +6,6 @@ enum class RankingPeriod(
 ) {
     WEEKLY("Semanal", "weeklyPoints"),
     MONTHLY("Mensual", "monthlyPoints"),
-    ALL_TIME("Historial", "totalPoints")
+    ALL_TIME("Historial", "totalPoints"),
+    GLOBAL("Global", "globalPoints")
 }

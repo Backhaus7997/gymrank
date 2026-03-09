@@ -5,6 +5,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -19,6 +20,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -57,6 +59,7 @@ private val White = Color(0xFFFFFFFF)
 private val AccentGreen = Color(0xFF32E37A)
 private val IconButtonBg = Color(0xFF151A18)
 private val Divider = Color(0xFF1C2420)
+private val SoftGlow = Color(0xFF103526)
 
 private const val TAG = "RankingScreen"
 
@@ -158,6 +161,20 @@ fun RankingScreen(
         val monthKeyNow = currentMonthKeyAr()
 
         suspend fun buildBaseQuery(ignoreGym: Boolean): com.google.firebase.firestore.Query {
+            // Para ranking global, no filtrar por gym
+            if (period == RankingPeriod.GLOBAL) {
+                return db.collection("users")
+                    .orderBy(pf, Query.Direction.DESCENDING)
+                    .limit(50)
+            }
+
+            // Para rankings semanales/mensuales sin gym, mostrar mensaje
+            if (gId.isNullOrBlank() && (period == RankingPeriod.WEEKLY || period == RankingPeriod.MONTHLY)) {
+                return db.collection("users")
+                    .whereEqualTo("__name__", "nonexistent_doc") // Query que no retorna nada
+                    .limit(1)
+            }
+
             var q = if (!ignoreGym && !gId.isNullOrBlank()) {
                 db.collection("users").whereEqualTo("gymId", gId)
             } else {
@@ -168,6 +185,7 @@ fun RankingScreen(
                 RankingPeriod.WEEKLY -> q.whereEqualTo("weeklyKey", weekKeyNow)
                 RankingPeriod.MONTHLY -> q.whereEqualTo("monthlyKey", monthKeyNow)
                 RankingPeriod.ALL_TIME -> q
+                RankingPeriod.GLOBAL -> q // No debería llegar aquí por el if anterior
             }
 
             return q.orderBy(pf, Query.Direction.DESCENDING).limit(50)
@@ -192,6 +210,15 @@ fun RankingScreen(
         }
 
         suspend fun runHigherThanQuery(ignoreGym: Boolean, mePts: Int): Int {
+            // Para ranking global, no filtrar por gym
+            if (period == RankingPeriod.GLOBAL) {
+                val higherSnap = db.collection("users")
+                    .whereGreaterThan(pf, mePts)
+                    .get()
+                    .await()
+                return higherSnap.size()
+            }
+
             var higherQ = if (!ignoreGym && !gId.isNullOrBlank()) {
                 db.collection("users").whereEqualTo("gymId", gId)
             } else {
@@ -202,6 +229,7 @@ fun RankingScreen(
                 RankingPeriod.WEEKLY -> higherQ.whereEqualTo("weeklyKey", weekKeyNow)
                 RankingPeriod.MONTHLY -> higherQ.whereEqualTo("monthlyKey", monthKeyNow)
                 RankingPeriod.ALL_TIME -> higherQ
+                RankingPeriod.GLOBAL -> higherQ // No debería llegar aquí
             }
 
             val higherSnap = higherQ
@@ -292,7 +320,8 @@ fun RankingScreen(
                 gymLocation = gymLocation,
                 onBack = onBack,
                 onSearch = onSearch,
-                onNotifications = onNotifications
+                onNotifications = onNotifications,
+                onGlobalRanking = { selectedPeriod = RankingPeriod.GLOBAL }
             )
         },
         bottomBar = {
@@ -321,7 +350,8 @@ fun RankingScreen(
         ) {
             PeriodTabs(
                 selected = selectedPeriod,
-                onSelected = { selectedPeriod = it }
+                onSelected = { selectedPeriod = it },
+                hasGym = !gymId.isNullOrBlank()
             )
 
             Spacer(Modifier.height(14.dp))
@@ -344,21 +374,27 @@ fun RankingScreen(
                     }
                 }
 
+                // Mostrar mensaje cuando no tiene gimnasio y está viendo ranking semanal/mensual
+                gymId.isNullOrBlank() && (selectedPeriod == RankingPeriod.WEEKLY || selectedPeriod == RankingPeriod.MONTHLY) -> {
+                    NoGymRankingMessage()
+                }
+
                 else -> {
                     val sorted = entries.sortedBy { it.position }
                     val top = sorted.take(3)
 
                     if (top.isNotEmpty()) {
+                        Spacer(Modifier.height(6.dp))
                         PodiumTop3Adaptive(top = top)
-                        Spacer(Modifier.height(16.dp))
+                        Spacer(Modifier.height(18.dp))
                     } else {
-                        Spacer(Modifier.height(8.dp))
+                        Spacer(Modifier.height(10.dp))
                     }
 
                     LazyColumn(
                         modifier = Modifier.fillMaxSize(),
-                        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
-                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 4.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
                     ) {
                         items(sorted.drop(3)) { entry ->
                             RankingRow(entry = entry)
@@ -386,18 +422,17 @@ private fun RankingHeader(
     gymLocation: String,
     onBack: () -> Unit,
     onSearch: () -> Unit,
-    onNotifications: () -> Unit
+    onNotifications: () -> Unit,
+    onGlobalRanking: () -> Unit
 ) {
     Column(
         modifier = Modifier
             .fillMaxWidth()
             .background(ScreenBg)
-            .padding(top = 10.dp, bottom = 8.dp)
+            .padding(top = 10.dp, start = 16.dp, end = 16.dp, bottom = 4.dp)
     ) {
         Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 14.dp),
+            modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically
         ) {
             CircleIconButton(onClick = onBack) {
@@ -408,9 +443,11 @@ private fun RankingHeader(
                 )
             }
 
-            Spacer(Modifier.width(10.dp))
+            Spacer(Modifier.width(12.dp))
 
-            Column(modifier = Modifier.weight(1f)) {
+            Column(
+                modifier = Modifier.weight(1f)
+            ) {
                 Text(
                     text = gymName,
                     fontSize = 18.sp,
@@ -419,14 +456,19 @@ private fun RankingHeader(
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
+
                 Spacer(Modifier.height(6.dp))
-                Surface(color = IconButtonBg, shape = RoundedCornerShape(999.dp)) {
+
+                Surface(
+                    color = IconButtonBg,
+                    shape = RoundedCornerShape(999.dp)
+                ) {
                     Text(
                         text = gymLocation,
                         fontSize = 11.sp,
                         fontWeight = FontWeight.Medium,
                         color = Muted,
-                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
                     )
                 }
             }
@@ -434,13 +476,30 @@ private fun RankingHeader(
             Spacer(Modifier.width(10.dp))
 
             CircleIconButton(onClick = onSearch) {
-                Icon(Icons.Filled.Search, contentDescription = "Buscar", tint = White)
+                Icon(
+                    imageVector = Icons.Filled.Search,
+                    contentDescription = "Buscar",
+                    tint = White
+                )
             }
 
             Spacer(Modifier.width(10.dp))
 
-            CircleIconButton(onClick = onNotifications) {
-                Icon(Icons.Filled.Notifications, contentDescription = "Notificaciones", tint = White)
+            Button(
+                onClick = onGlobalRanking,
+                shape = RoundedCornerShape(999.dp),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = AccentGreen,
+                    contentColor = Color.Black
+                ),
+                contentPadding = PaddingValues(horizontal = 18.dp, vertical = 0.dp),
+                modifier = Modifier.height(42.dp)
+            ) {
+                Text(
+                    text = "Top Global",
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.Bold
+                )
             }
         }
     }
@@ -463,51 +522,53 @@ private fun CircleIconButton(
 @Composable
 private fun PeriodTabs(
     selected: RankingPeriod,
-    onSelected: (RankingPeriod) -> Unit
+    onSelected: (RankingPeriod) -> Unit,
+    hasGym: Boolean = true
 ) {
-    val items = remember { RankingPeriod.values().toList() }
-    val selectedIndex = items.indexOf(selected)
+    val availablePeriods = listOf(RankingPeriod.WEEKLY, RankingPeriod.MONTHLY)
 
-    Column(modifier = Modifier.fillMaxWidth()) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 18.dp),
-            horizontalArrangement = Arrangement.SpaceBetween
-        ) {
-            items.forEachIndexed { idx, period ->
-                val isSelected = idx == selectedIndex
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 28.dp, vertical = 10.dp),
+        horizontalArrangement = Arrangement.SpaceEvenly
+    ) {
+        availablePeriods.forEach { period ->
+            val isSelected = selected == period
 
-                Column(
-                    modifier = Modifier
-                        .weight(1f)
-                        .padding(top = 6.dp, bottom = 10.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                modifier = Modifier.weight(1f)
+            ) {
+                TextButton(
+                    onClick = { onSelected(period) },
+                    contentPadding = PaddingValues(0.dp)
                 ) {
-                    TextButton(onClick = { onSelected(period) }, contentPadding = PaddingValues(0.dp)) {
-                        Text(
-                            text = period.label,
-                            fontSize = 15.sp,
-                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.SemiBold,
-                            color = if (isSelected) AccentGreen else Muted
-                        )
-                    }
-
-                    Spacer(Modifier.height(6.dp))
-
-                    Box(
-                        modifier = Modifier
-                            .width(86.dp)
-                            .height(3.dp)
-                            .clip(RoundedCornerShape(999.dp))
-                            .background(if (isSelected) AccentGreen else Color.Transparent)
+                    Text(
+                        text = period.label,
+                        color = if (isSelected) AccentGreen else White.copy(alpha = 0.65f),
+                        fontSize = 16.sp,
+                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.SemiBold
                     )
                 }
+
+                Spacer(Modifier.height(8.dp))
+
+                Box(
+                    modifier = Modifier
+                        .width(110.dp)
+                        .height(4.dp)
+                        .clip(RoundedCornerShape(999.dp))
+                        .background(if (isSelected) AccentGreen else Color.Transparent)
+                )
             }
         }
-
-        HorizontalDivider(color = Divider, thickness = 1.dp)
     }
+
+    HorizontalDivider(
+        color = Divider,
+        thickness = 1.dp
+    )
 }
 
 // ============================================
@@ -516,99 +577,122 @@ private fun PeriodTabs(
 
 @Composable
 private fun PodiumTop3Adaptive(top: List<RankingEntry>) {
+    val first = top.getOrNull(0)
+    val second = top.getOrNull(1)
+    val third = top.getOrNull(2)
+
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 16.dp),
+            .padding(horizontal = 18.dp, vertical = 8.dp),
         horizontalArrangement = Arrangement.SpaceEvenly,
         verticalAlignment = Alignment.Top
     ) {
-        when (top.size) {
-            1 -> {
-                Spacer(Modifier.width(110.dp))
-                PodiumCard(entry = top[0], size = 108.dp, label = "#1", medal = "🥇", isWinner = true)
-                Spacer(Modifier.width(110.dp))
-            }
+        if (second != null) {
+            PodiumCard(
+                entry = second,
+                size = 92.dp,
+                label = "#2",
+                medal = "🥈",
+                isWinner = false
+            )
+        } else {
+            Spacer(modifier = Modifier.width(96.dp))
+        }
 
-            2 -> {
-                PodiumCard(entry = top[1], size = 76.dp, label = "#2", medal = "🥈", isWinner = false)
-                PodiumCard(entry = top[0], size = 108.dp, label = "#1", medal = "🥇", isWinner = true)
-                Spacer(Modifier.width(110.dp))
-            }
+        if (first != null) {
+            PodiumCard(
+                entry = first,
+                size = 128.dp,
+                label = "#1",
+                medal = "🥇",
+                isWinner = true
+            )
+        }
 
-            else -> {
-                PodiumCard(entry = top[1], size = 76.dp, label = "#2", medal = "🥈", isWinner = false)
-                PodiumCard(entry = top[0], size = 108.dp, label = "#1", medal = "🥇", isWinner = true)
-                PodiumCard(entry = top[2], size = 76.dp, label = "#3", medal = "🥉", isWinner = false)
-            }
+        if (third != null) {
+            PodiumCard(
+                entry = third,
+                size = 92.dp,
+                label = "#3",
+                medal = "🥉",
+                isWinner = false
+            )
+        } else {
+            Spacer(modifier = Modifier.width(96.dp))
         }
     }
 }
 
 @Composable
-private fun PodiumCard(entry: RankingEntry, size: Dp, label: String, medal: String, isWinner: Boolean) {
-    // ✅ Resaltar solo si es MI entrada, no por ser ganador
-    val shouldHighlight = entry.isMe
+private fun PodiumCard(
+    entry: RankingEntry,
+    size: Dp,
+    label: String,
+    medal: String,
+    isWinner: Boolean
+) {
+    val isMe = entry.isMe
 
-    Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.width(110.dp)) {
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        modifier = Modifier.width(if (isWinner) 132.dp else 102.dp)
+    ) {
         Box(
             modifier = Modifier
                 .size(size)
                 .clip(CircleShape)
                 .background(
                     when {
-                        shouldHighlight -> AccentGreen.copy(alpha = 0.15f)
-                        isWinner -> Color.Transparent
+                        isMe -> SoftGlow
                         else -> IconButtonBg
                     }
                 )
                 .border(
-                    width = when {
-                        shouldHighlight -> 3.dp
-                        isWinner -> 2.dp
-                        else -> 1.dp
-                    },
+                    width = if (isWinner || isMe) 3.dp else 1.dp,
                     color = when {
-                        shouldHighlight -> AccentGreen
-                        isWinner -> AccentGreen.copy(alpha = 0.4f) // Más sutil para ganador
+                        isMe -> AccentGreen
+                        isWinner -> AccentGreen.copy(alpha = 0.85f)
                         else -> CardStroke
                     },
                     shape = CircleShape
                 ),
             contentAlignment = Alignment.Center
-        ) { Text(text = medal, fontSize = if (isWinner) 44.sp else 32.sp) }
+        ) {
+            Text(
+                text = medal,
+                fontSize = if (isWinner) 48.sp else 34.sp
+            )
+        }
 
         Spacer(Modifier.height(10.dp))
 
         Text(
             text = label,
-            fontSize = 13.sp,
-            fontWeight = FontWeight.Bold,
-            color = when {
-                shouldHighlight -> AccentGreen
-                isWinner -> AccentGreen.copy(alpha = 0.8f)
-                else -> Muted
-            }
+            color = if (isWinner || isMe) AccentGreen else Muted,
+            fontSize = 14.sp,
+            fontWeight = FontWeight.Bold
         )
 
         Spacer(Modifier.height(6.dp))
 
         Text(
-            text = if (shouldHighlight) "Tú" else entry.name,
-            fontSize = 14.sp,
-            fontWeight = if (shouldHighlight) FontWeight.Bold else FontWeight.SemiBold,
-            color = if (shouldHighlight) AccentGreen else White,
+            text = if (isMe) "Tú" else entry.name,
+            color = if (isMe) AccentGreen else White,
+            fontSize = if (isWinner) 15.sp else 14.sp,
+            fontWeight = FontWeight.Bold,
+            textAlign = TextAlign.Center,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis
         )
 
-        Spacer(Modifier.height(2.dp))
+        Spacer(Modifier.height(4.dp))
 
         Text(
             text = "${formatPts(entry.points)} pts",
-            fontSize = 12.sp,
-            fontWeight = FontWeight.Medium,
-            color = if (shouldHighlight) AccentGreen.copy(alpha = 0.9f) else Muted
+            color = if (isMe || isWinner) AccentGreen.copy(alpha = 0.95f) else White.copy(alpha = 0.82f),
+            fontSize = 13.sp,
+            fontWeight = FontWeight.SemiBold
         )
     }
 }
@@ -630,34 +714,87 @@ private fun EmptyRankingState() {
     }
 }
 
+@Composable
+private fun NoGymRankingMessage() {
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(horizontal = 24.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center
+        ) {
+            // Ícono del gimnasio
+            Box(
+                modifier = Modifier
+                    .size(80.dp)
+                    .clip(CircleShape)
+                    .background(AccentGreen.copy(alpha = 0.1f)),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = "🏢",
+                    fontSize = 32.sp
+                )
+            }
+
+            Spacer(Modifier.height(24.dp))
+
+            Text(
+                text = "No participás del ranking\nsemanal/mensual",
+                fontSize = 20.sp,
+                fontWeight = FontWeight.Bold,
+                color = White,
+                textAlign = TextAlign.Center,
+                lineHeight = 26.sp
+            )
+
+            Spacer(Modifier.height(12.dp))
+
+            Text(
+                text = "Tu gimnasio no está vinculado a la app.\nSolicitá a tu gym vincularse para acceder\nal ranking.",
+                fontSize = 14.sp,
+                fontWeight = FontWeight.Medium,
+                color = Muted,
+                textAlign = TextAlign.Center,
+                lineHeight = 20.sp
+            )
+
+            Spacer(Modifier.height(32.dp))
+        }
+    }
+}
+
 // ============================================
 // ROW
 // ============================================
 
 @Composable
 private fun RankingRow(entry: RankingEntry, modifier: Modifier = Modifier) {
-    val backgroundColor = if (entry.isMe) AccentGreen.copy(alpha = 0.12f) else CardBg
-    val borderColor = if (entry.isMe) AccentGreen.copy(alpha = 0.6f) else CardStroke
-    val borderWidth = if (entry.isMe) 2.dp else 1.dp
-
     Surface(
         modifier = modifier.fillMaxWidth(),
-        color = backgroundColor,
-        shape = RoundedCornerShape(18.dp),
-        tonalElevation = if (entry.isMe) 2.dp else 0.dp
+        color = CardBg.copy(alpha = 0.96f),
+        shape = RoundedCornerShape(20.dp),
+        tonalElevation = 0.dp
     ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .border(borderWidth, borderColor, RoundedCornerShape(18.dp))
-                .padding(horizontal = 14.dp, vertical = 14.dp),
+                .border(
+                    width = 1.dp,
+                    color = if (entry.isMe) AccentGreen.copy(alpha = 0.45f) else CardStroke,
+                    shape = RoundedCornerShape(20.dp)
+                )
+                .padding(horizontal = 16.dp, vertical = 16.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             Text(
                 text = "#${entry.position}",
                 fontSize = 14.sp,
                 fontWeight = FontWeight.Bold,
-                color = if (entry.isMe) AccentGreen else Muted,
+                color = White.copy(alpha = 0.8f),
                 modifier = Modifier.width(38.dp)
             )
 
@@ -667,41 +804,45 @@ private fun RankingRow(entry: RankingEntry, modifier: Modifier = Modifier) {
                 modifier = Modifier
                     .size(34.dp)
                     .clip(CircleShape)
-                    .background(if (entry.isMe) AccentGreen.copy(alpha = 0.2f) else IconButtonBg)
-                    .border(1.dp, if (entry.isMe) AccentGreen else CardStroke, CircleShape),
+                    .background(IconButtonBg)
+                    .border(1.dp, CardStroke, CircleShape),
                 contentAlignment = Alignment.Center
             ) {
                 Text(
-                    text = if (entry.isMe) "👤" else "🏋️",
-                    fontSize = 16.sp
+                    text = "🏋️",
+                    fontSize = 15.sp
                 )
             }
 
             Spacer(Modifier.width(12.dp))
 
-            Column(modifier = Modifier.weight(1f)) {
+            Column(
+                modifier = Modifier.weight(1f)
+            ) {
                 Text(
-                    text = entry.name,
-                    fontSize = 15.sp,
-                    fontWeight = if (entry.isMe) FontWeight.Bold else FontWeight.SemiBold,
+                    text = if (entry.isMe) "Tú" else entry.name,
+                    fontSize = 16.sp,
+                    fontWeight = FontWeight.Bold,
                     color = if (entry.isMe) AccentGreen else White,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
+
                 Spacer(Modifier.height(2.dp))
+
                 Text(
-                    text = if (entry.isMe) "Tú" else "Competidor/a",
-                    fontSize = 12.sp,
+                    text = "Competidor/a",
+                    fontSize = 13.sp,
                     fontWeight = FontWeight.Medium,
-                    color = if (entry.isMe) AccentGreen.copy(alpha = 0.8f) else Muted
+                    color = Muted
                 )
             }
 
             Text(
                 text = "${formatPts(entry.points)} pts",
-                fontSize = 14.sp,
+                fontSize = 15.sp,
                 fontWeight = FontWeight.Bold,
-                color = if (entry.isMe) AccentGreen else White
+                color = White
             )
         }
     }
@@ -712,25 +853,37 @@ private fun RankingRow(entry: RankingEntry, modifier: Modifier = Modifier) {
 // ============================================
 
 @Composable
-private fun MyPositionBar(position: Int, points: Int, onViewDetails: () -> Unit, modifier: Modifier = Modifier) {
+private fun MyPositionBar(
+    position: Int,
+    points: Int,
+    onViewDetails: () -> Unit,
+    modifier: Modifier = Modifier
+) {
     Surface(
         modifier = modifier.fillMaxWidth(),
-        color = Color(0xFF000000),
-        tonalElevation = 6.dp,
-        shadowElevation = 10.dp
+        color = Color(0xFF050706),
+        tonalElevation = 0.dp,
+        shadowElevation = 0.dp
     ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 14.dp),
+                .padding(horizontal = 18.dp, vertical = 14.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             Column(modifier = Modifier.weight(1f)) {
-                Text(text = "Tu posición", fontSize = 12.sp, fontWeight = FontWeight.Medium, color = Muted)
+                Text(
+                    text = "Tu posición",
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Medium,
+                    color = White.copy(alpha = 0.7f)
+                )
+
                 Spacer(Modifier.height(4.dp))
+
                 Text(
                     text = if (position > 0) "#$position · ${formatPts(points)} pts" else "— · ${formatPts(points)} pts",
-                    fontSize = 18.sp,
+                    fontSize = 16.sp,
                     fontWeight = FontWeight.Bold,
                     color = White
                 )
@@ -739,11 +892,18 @@ private fun MyPositionBar(position: Int, points: Int, onViewDetails: () -> Unit,
             Button(
                 onClick = onViewDetails,
                 shape = RoundedCornerShape(999.dp),
-                colors = ButtonDefaults.buttonColors(containerColor = AccentGreen, contentColor = Color(0xFF000000)),
-                contentPadding = PaddingValues(horizontal = 18.dp, vertical = 10.dp),
-                modifier = Modifier.height(44.dp)
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = AccentGreen,
+                    contentColor = Color.Black
+                ),
+                contentPadding = PaddingValues(horizontal = 24.dp, vertical = 0.dp),
+                modifier = Modifier.height(46.dp)
             ) {
-                Text(text = "Ver detalles", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                Text(
+                    text = "Ver detalles",
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.Bold
+                )
             }
         }
     }

@@ -1,8 +1,10 @@
 package com.example.gymrank.data.repository
 
+import com.example.gymrank.domain.model.GlobalLevel
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.firestore.FieldValue
 import com.google.firebase.firestore.FirebaseFirestore
+import com.google.firebase.firestore.Query
 import com.google.firebase.firestore.SetOptions
 import kotlinx.coroutines.tasks.await
 import java.util.Calendar
@@ -25,6 +27,8 @@ class PointsRepositoryFirestoreImpl(
     private val FIELD_TOTAL_POINTS = "totalPoints"
     private val FIELD_WEEKLY_KEY = "weeklyKey"
     private val FIELD_MONTHLY_KEY = "monthlyKey"
+    private val FIELD_GLOBAL_POINTS = "globalPoints"
+    private val FIELD_GLOBAL_LEVEL = "globalLevel"
 
     // ============================
     // ✅ Timezone AR
@@ -161,5 +165,154 @@ class PointsRepositoryFirestoreImpl(
             sourceId = todayKey,
             points = points
         )
+    }
+
+    // ============================
+    // ✅ Sistema de puntos globales
+    // ============================
+
+    /**
+     * Calcula y actualiza los puntos globales basado en los puntos mensuales
+     * Regla: puntosGlobalesGanados = (puntosMensuales / 10) + bonusTopGym
+     */
+    suspend fun processMonthlyClose(monthKey: String) {
+        val gyms = getActiveGyms()
+
+        for (gymId in gyms) {
+            val topUsers = getTopUsersForGym(gymId, monthKey, 3)
+
+            // Procesar bonos por posición
+            topUsers.forEachIndexed { index, userId ->
+                val bonus = when (index) {
+                    0 -> 100 // Top 1
+                    1 -> 60  // Top 2
+                    2 -> 30  // Top 3
+                    else -> 0
+                }
+
+                if (bonus > 0) {
+                    awardGlobalPointsWithBonus(userId, monthKey, bonus)
+                }
+            }
+        }
+
+        // Procesar usuarios sin gimnasio (solo puntos base, sin bonus)
+        processUsersWithoutGym(monthKey)
+    }
+
+    private suspend fun getActiveGyms(): List<String> {
+        return try {
+            val snapshot = usersCol
+                .whereNotEqualTo("gymId", null)
+                .get()
+                .await()
+
+            snapshot.documents
+                .mapNotNull { it.getString("gymId") }
+                .distinct()
+        } catch (e: Exception) {
+            emptyList()
+        }
+    }
+
+    private suspend fun getTopUsersForGym(gymId: String, monthKey: String, limit: Int): List<String> {
+        return try {
+            val snapshot = usersCol
+                .whereEqualTo("gymId", gymId)
+                .whereEqualTo("monthlyKey", monthKey)
+                .orderBy("monthlyPoints", Query.Direction.DESCENDING)
+                .limit(limit.toLong())
+                .get()
+                .await()
+
+            snapshot.documents.map { it.id }
+        } catch (e: Exception) {
+            emptyList()
+        }
+    }
+
+    private suspend fun processUsersWithoutGym(monthKey: String) {
+        try {
+            val snapshot = usersCol
+                .whereEqualTo("gymId", null)
+                .whereEqualTo("monthlyKey", monthKey)
+                .get()
+                .await()
+
+            for (doc in snapshot.documents) {
+                awardGlobalPointsWithBonus(doc.id, monthKey, 0)
+            }
+        } catch (e: Exception) {
+            // Log error pero continuar
+        }
+    }
+
+    private suspend fun awardGlobalPointsWithBonus(userId: String, monthKey: String, bonus: Int) {
+        val userRef = usersCol.document(userId)
+
+        db.runTransaction { tx ->
+            val userSnap = tx.get(userRef)
+            val monthlyPoints = userSnap.getLong("monthlyPoints") ?: 0L
+            val currentGlobalPoints = userSnap.getLong(FIELD_GLOBAL_POINTS) ?: 0L
+
+            // Calcular puntos ganados: (monthlyPoints / 10) + bonus
+            val basePoints = (monthlyPoints / 10).toInt()
+            val totalGained = basePoints + bonus
+
+            if (totalGained > 0) {
+                val newGlobalPoints = currentGlobalPoints + totalGained
+                val newGlobalLevel = GlobalLevel.calculateLevel(newGlobalPoints.toInt())
+
+                // Crear entrada en ledger para auditoría
+                val entryRef = ledgerRoot.document(userId)
+                    .collection("entries")
+                    .document("monthly_close_${monthKey}")
+
+                tx.set(entryRef, mapOf(
+                    "uid" to userId,
+                    "eventId" to "monthly_close_${monthKey}",
+                    "sourceType" to "monthly_close",
+                    "sourceId" to monthKey,
+                    "points" to totalGained,
+                    "basePoints" to basePoints,
+                    "bonusPoints" to bonus,
+                    "monthlyPoints" to monthlyPoints,
+                    "createdAt" to FieldValue.serverTimestamp()
+                ), SetOptions.merge())
+
+                // Actualizar usuario
+                tx.set(userRef, mapOf(
+                    FIELD_GLOBAL_POINTS to newGlobalPoints,
+                    FIELD_GLOBAL_LEVEL to newGlobalLevel,
+                    "updatedAt" to FieldValue.serverTimestamp()
+                ), SetOptions.merge())
+            }
+
+            null
+        }.await()
+    }
+
+    /**
+     * Inicializa campos globales para usuarios existentes
+     */
+    suspend fun ensureGlobalFields(uid: String) {
+        val userRef = usersCol.document(uid)
+        val snap = userRef.get().await()
+
+        if (!snap.exists()) return
+
+        val updates = mutableMapOf<String, Any>()
+
+        if (snap.getLong(FIELD_GLOBAL_POINTS) == null) {
+            updates[FIELD_GLOBAL_POINTS] = 0L
+        }
+
+        if (snap.getLong(FIELD_GLOBAL_LEVEL) == null) {
+            updates[FIELD_GLOBAL_LEVEL] = 1L
+        }
+
+        if (updates.isNotEmpty()) {
+            userRef.set(updates, SetOptions.merge()).await()
+        }
     }
 }
